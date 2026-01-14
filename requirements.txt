@@ -2,6 +2,9 @@ streamlit
 pandas
 plotly
 fpdf
-pywhatkit
+
 qrcode
 pillow
+watchdog
+
+st-gsheets-connection

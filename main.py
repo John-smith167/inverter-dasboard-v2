@@ -6,11 +6,20 @@ from database import DatabaseManager
 from fpdf import FPDF
 import base64
 import time
-import pywhatkit
+import urllib.parse
 import qrcode
 from io import BytesIO
 
 # Initialize Database
+# Check for secrets (support both new connections.gsheets and legacy gsheets)
+if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+    pass # Found in connections
+elif "gsheets" in st.secrets:
+    pass # Found in top level
+else:
+    st.error("🚨 Critical Error: Google Sheets Secrets not found in `.streamlit/secrets.toml`. Please configure the connection.")
+    st.stop()
+    
 db = DatabaseManager()
 
 # --- PDF INVOICE GENERATOR ---
@@ -199,20 +208,23 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
 
     # 4. WhatsApp Alert (New)
     st.divider()
-    if st.button("🟢 Send Ready Alert (WhatsApp)", use_container_width=True):
-        try:
-            # Phone Cleaning: Default to +92 if missing +
-            p_num = str(phone_number).strip()
-            if not p_num.startswith("+"):
-                p_num = "+92" + p_num.lstrip("0")
-            
-            msg = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - Inverter Pro"
-            
-            # Send (Wait 15s to load, then send)
-            pywhatkit.sendwhatmsg_instantly(p_num, msg, 15, True, 4)
-            st.success("Message Sent via WhatsApp Web!")
-        except Exception as e:
-            st.error(f"Failed to send: {e}")
+    # WA Link Logic (Cloud Safe)
+    # pywhatkit removed due to cloud server crashes (KeyError: DISPLAY)
+    # Using st.link_button instead
+    
+    # Phone Cleaning
+    clean_phone = str(phone_number).strip()
+    if clean_phone.startswith("0"):
+        clean_phone = "92" + clean_phone[1:]
+    
+    # Message
+    msg_text = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - Inverter Pro"
+    encoded_msg = urllib.parse.quote(msg_text)
+    
+    # URL
+    whatsapp_url = f"https://wa.me/{clean_phone}?text={encoded_msg}"
+    
+    st.link_button("🟢 Open in WhatsApp", whatsapp_url, use_container_width=True)
 
 @st.dialog("Stock Control")
 def inventory_dialog(item_id, item_name, current_price, current_qty):
