@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
+import time
+import random
 from streamlit_gsheets import GSheetsConnection
 
 class DatabaseManager:
@@ -14,18 +16,82 @@ class DatabaseManager:
             pass
 
     def _read_data(self, worksheet_name):
-        """Helper to read data from a specific worksheet."""
-        try:
-            # ttl=0 ensures we don't cache locally and always get fresh data from Google Sheets
-            df = self.conn.read(worksheet=worksheet_name, ttl=0)
-            return df
-        except Exception:
-             # If sheet doesn't exist or other error, return empty DataFrame
-             return pd.DataFrame()
+        """Helper to read data from a specific worksheet with retry logic."""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # ttl=0 ensures we don't cache locally and always get fresh data from Google Sheets
+                df = self.conn.read(worksheet=worksheet_name, ttl=0)
+                return df
+            except Exception as e:
+                error_msg = str(e)
+                # Check for Quota exceeded Error
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    if attempt < max_retries - 1:
+                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                        time.sleep(sleep_time)
+                        continue
+                
+                # If sheet doesn't exist or other error, return empty DataFrame
+                # We interpret most read errors as empty sheet to avoid crashing, 
+                # except for Rate Limit which we retried.
+                if attempt == max_retries - 1 and ("429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg):
+                     # If we failed retries on quota, we should probably raise or warn. 
+                     # But original behavior was return empty DF on error? 
+                     # No, original was `except Exception: return pd.DataFrame()`.
+                     # Let's keep it safe but maybe log warning.
+                     pass
+                     
+                return pd.DataFrame()
 
     def _write_data(self, worksheet_name, df):
-        """Helper to write (overwrite) data to a specific worksheet."""
-        self.conn.update(worksheet=worksheet_name, data=df)
+        """Helper to write (overwrite) data to a specific worksheet with retry logic."""
+        max_retries = 5 
+        for attempt in range(max_retries):
+            try:
+                self.conn.update(worksheet=worksheet_name, data=df)
+                return # Success
+            except Exception as e:
+                error_msg = str(e)
+                
+                # 1. Handle Rate Limiting (Quota Exceeded)
+                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 2, 4, 8... + jitter
+                        sleep_time = (2 ** attempt) + random.uniform(0, 1)
+                        st.toast(f"⏳ API Quota hit. Retrying in {sleep_time:.1f}s...", icon="⚠️")
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        st.error("❌ Google Sheets API Quota Exceeded. Please try again in a minute.")
+                        raise e
+
+                # 2. Handle Missing Worksheet (Auto-creation)
+                # Check for gspread WorksheetNotFound exception by name or message
+                if "WorksheetNotFound" in type(e).__name__ or "WorksheetNotFound" in error_msg or "not found" in error_msg.lower():
+                    try:
+                        st.warning(f"📝 Worksheet '{worksheet_name}' not found. Attempting to create it...")
+                        
+                        # Use the connection's create method which handles everything
+                        # This avoids accessing .client directly which caused AttributeError
+                        self.conn.create(worksheet=worksheet_name, data=df)
+                        
+                        st.success(f"✅ Created worksheet '{worksheet_name}' and saved data successfully!")
+                        return # Success
+                        
+                    except Exception as create_error:
+                        st.error(f"⚠️ **Auto-creation failed for worksheet '{worksheet_name}'**")
+                        st.error(f"**Error:** {str(create_error)}")
+                        st.info("📋 **Manual Steps:**")
+                        st.info(f"1. Open your Google Sheet")
+                        st.info(f"2. Create a new worksheet named: **{worksheet_name}**")
+                        st.info(f"3. Try this operation again")
+                        return
+
+                # 3. Other Errors
+                # If it's not a quota error and not a missing sheet error, re-raise immediately
+                raise e
+
 
     def _get_next_id(self, df):
         if df.empty or 'id' not in df.columns:
@@ -354,7 +420,123 @@ class DatabaseManager:
         
         return True, "Item sold successfully"
 
-    # --- Analytics Methods (Using Pandas) ---
+    def get_next_invoice_number(self):
+        """
+        Generates the next Invoice # based on Sales data.
+        Format: INV-YYYY-XXX (e.g., INV-2026-001)
+        """
+        df = self._read_data("Sales")
+        year = datetime.now().year
+        prefix = f"INV-{year}-"
+        
+        if df.empty or 'invoice_id' not in df.columns:
+            return f"{prefix}001"
+            
+        # Filter for current year invoices
+        # Assuming invoice_id column exists
+        invoices = df['invoice_id'].dropna().astype(str)
+        current_year_invs = invoices[invoices.str.startswith(prefix)]
+        
+        if current_year_invs.empty:
+            return f"{prefix}001"
+            
+        # Extract numbers
+        try:
+             # Take the last part after split
+             max_num = current_year_invs.apply(lambda x: int(x.split('-')[-1])).max()
+             next_num = max_num + 1
+             return f"{prefix}{next_num:03d}"
+        except:
+             return f"{prefix}001"
+
+    def record_invoice(self, invoice_id, customer_name, items_df, freight, misc, grand_total):
+        """
+        Records a full sales invoice.
+        1. Saves items to Sales table.
+        2. Deducts Inventory (if match).
+        3. Updates Ledger.
+        """
+        # 1. Update Sales Table
+        sales_df = self._read_data("Sales")
+        # Extended Schema for Sales
+        cols = ["id", "invoice_id", "customer_name", "item_name", "quantity_sold", 
+                "sale_price", "return_quantity", "total_amount", "sale_date"]
+                
+        if sales_df.empty:
+            sales_df = pd.DataFrame(columns=cols)
+            
+        new_rows = []
+        date_now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        start_id = self._get_next_id(sales_df)
+        
+        # Prepare Inventory Data
+        inv_df = self._read_data("Inventory")
+        inv_changed = False
+        
+        for idx, row in items_df.iterrows():
+            item_name = row['Item Name']
+            qty = float(row['Qty'])
+            rate = float(row['Rate'])
+            ret_qty = float(row['Return Qty'])
+            row_total = row['Total'] # or calc: (qty * rate) - (ret_qty * rate)
+            
+            # Add to Sales Rows
+            new_rows.append({
+                "id": start_id + idx,
+                "invoice_id": invoice_id,
+                "customer_name": customer_name,
+                "item_name": item_name,
+                "quantity_sold": qty,
+                "sale_price": rate,
+                "return_quantity": ret_qty,
+                "total_amount": row_total,
+                "sale_date": date_now
+            })
+            
+            # 2. Inventory Deduction (Smart Match)
+            # Logic: Deduct (Qty - Return Qty). If result > 0, deduct. If < 0, add? 
+            # User said: "Return Qty... Customer returning old stock during this sale"
+            # So if I sell 5, return 2, net stock change is -3. 
+            # If I sell 0, return 2, net stock change is +2.
+            net_change = qty - ret_qty
+            
+            if not inv_df.empty:
+                # Case-insensitive match on Name
+                # We need to find the item. 
+                # Create a normalized look-up if possible or just loop
+                # Simplest: Loop indices
+                match_indices = inv_df.index[inv_df['item_name'].str.lower() == item_name.strip().lower()].tolist()
+                
+                if match_indices:
+                     # Deduct from first match
+                     i_idx = match_indices[0]
+                     curr_stock = inv_df.at[i_idx, 'quantity']
+                     # Deduction: Stock = Stock - NetChange
+                     # If NetChange is positive (Sold more), Stock decreases.
+                     # If NetChange is negative (Returned more), Stock increases.
+                     new_stock = curr_stock - net_change
+                     inv_df.at[i_idx, 'quantity'] = new_stock
+                     inv_changed = True
+
+        if new_rows:
+            new_sales_df = pd.DataFrame(new_rows)
+            updated_sales = pd.concat([sales_df, new_sales_df], ignore_index=True)
+            self._write_data("Sales", updated_sales)
+            
+        if inv_changed:
+            self._write_data("Inventory", inv_df)
+            
+        # 3. Ledger Update
+        # Debit the Customer for the Grand Total
+        desc = f"Invoice #{invoice_id}"
+        if freight > 0 or misc > 0:
+             desc += f" (Inc. Freight/Misc)"
+             
+        # Debit = Receiver (Customer owes us) -> Positive Amount in Debit column
+        self.add_ledger_entry(customer_name, desc, grand_total, 0.0, datetime.now().date())
+        
+        return True
+
     def get_revenue_analytics(self):
         repairs = self._read_data("Repairs")
         if repairs.empty: return 0.0, 0.0
@@ -410,20 +592,55 @@ class DatabaseManager:
 
     def get_ledger_entries(self, party_name):
         df = self._read_data("Ledger")
-        if df.empty:
-             return df
         
-        # Filter by party
-        party_ledger = df[df['party_name'] == party_name].copy()
+        # Base Ledger
+        if not df.empty:
+            party_ledger = df[df['party_name'] == party_name].copy()
+            # Convert to View Schema
+            try:
+                party_ledger = party_ledger[['date', 'description', 'debit', 'credit']]
+            except KeyError:
+                # Fallback if columns missing
+                 party_ledger = pd.DataFrame(columns=['date', 'description', 'debit', 'credit'])
+        else:
+            party_ledger = pd.DataFrame(columns=['date', 'description', 'debit', 'credit'])
+            
+        # Fetch Opening Balance from Customers
+        cust_df = self._read_data("Customers")
+        opening_bal = 0.0
         
-        # Sort by date
-        if not party_ledger.empty:
-             party_ledger = party_ledger.sort_values(by=['date', 'id'])
+        if not cust_df.empty and 'name' in cust_df.columns:
+            matches = cust_df[cust_df['name'].str.lower() == party_name.lower()]
+            if not matches.empty:
+                # Assuming first match is correct
+                row = matches.iloc[0]
+                if 'opening_balance' in matches.columns:
+                     try:
+                         val = float(row['opening_balance'])
+                         opening_bal = val
+                     except: pass
+        
+        # Inject Opening Balance Row if exists
+        if opening_bal != 0:
+            # Determine sign
+            debit = opening_bal if opening_bal > 0 else 0.0
+            credit = abs(opening_bal) if opening_bal < 0 else 0.0
              
+            # Create Row
+            op_row = pd.DataFrame([{
+                "date": "Old Khata", 
+                "description": "Opening Balance (B/F)",
+                "debit": debit,
+                "credit": credit
+            }])
+            
+            # Combine: Opening Balance First
+            party_ledger = pd.concat([op_row, party_ledger], ignore_index=True)
+            
         return party_ledger
 
     def get_all_ledger_parties(self):
-        # Ledger Parties + Repair Clients
+        # Ledger Parties + Repair Clients + Customers Directory
         parties = set()
         
         ledger = self._read_data("Ledger")
@@ -434,4 +651,289 @@ class DatabaseManager:
         if not repairs.empty:
             parties.update(repairs['client_name'].dropna().unique())
             
+        # Add Customers from Directory
+        customers = self._read_data("Customers")
+        if not customers.empty and 'name' in customers.columns:
+            parties.update(customers['name'].dropna().unique())
+            
         return sorted(list(parties))
+
+    # --- Employee Payroll Ledger Methods ---
+    def add_employee_ledger_entry(self, employee_name, date_val, entry_type, description, earned, paid):
+        """
+        Add an entry to the employee payroll ledger.
+        
+        Args:
+            employee_name: Name of the employee
+            date_val: Date of the transaction
+            entry_type: Type - "Work Log", "Salary Payment", or "Advance/Loan"
+            description: Description of the transaction
+            earned: Amount earned (credit to employee)
+            paid: Amount paid to employee (debit from balance)
+        """
+        df = self._read_data("EmployeeLedger")
+        columns = ["id", "employee_name", "date", "type", "description", "earned", "paid"]
+        
+        if df.empty:
+            df = pd.DataFrame(columns=columns)
+            
+        if not date_val:
+            date_val = datetime.now().strftime('%Y-%m-%d')
+        else:
+            date_val = str(date_val)
+            
+        new_id = self._get_next_id(df)
+        new_row = pd.DataFrame([{
+            "id": new_id,
+            "employee_name": employee_name,
+            "date": date_val,
+            "type": entry_type,
+            "description": description,
+            "earned": float(earned),
+            "paid": float(paid)
+        }])
+        
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        self._write_data("EmployeeLedger", updated_df)
+
+    def get_employee_ledger(self, employee_name):
+        """
+        Get all ledger entries for a specific employee, sorted by date (newest first).
+        
+        Args:
+            employee_name: Name of the employee
+            
+        Returns:
+            DataFrame with employee's ledger entries
+        """
+        df = self._read_data("EmployeeLedger")
+        if df.empty:
+            return pd.DataFrame(columns=["id", "employee_name", "date", "type", "description", "earned", "paid"])
+        
+        # Filter by employee
+        employee_ledger = df[df['employee_name'] == employee_name].copy()
+        
+        # Sort by date (newest first)
+        if not employee_ledger.empty:
+            employee_ledger = employee_ledger.sort_values(by=['date', 'id'], ascending=False)
+            
+        return employee_ledger
+
+    def calculate_employee_balance(self, employee_name):
+        """
+        Calculate the current balance for an employee.
+        Positive balance = Money owed to employee (Payable Salary)
+        Negative balance = Employee owes money (Outstanding Advance)
+        
+        Args:
+            employee_name: Name of the employee
+            
+        Returns:
+            Float balance (Total Earned - Total Paid)
+        """
+        ledger = self.get_employee_ledger(employee_name)
+        
+        if ledger.empty:
+            return 0.0
+            
+        total_earned = ledger['earned'].sum()
+        total_paid = ledger['paid'].sum()
+        
+        balance = total_earned - total_paid
+        
+        return float(balance)
+
+    # --- Client Directory Methods ---
+    def add_customer(self, name, city, phone, opening_balance):
+        df = self._read_data("Customers")
+        if df.empty:
+            df = pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance"])
+            
+        # Generate Customer ID (C001, C002...)
+        if not df.empty and 'customer_id' in df.columns:
+            # Extract numbers
+            existing_ids = df['customer_id'].astype(str).str.extract(r'C(\d+)').astype(float)
+            if not existing_ids.empty:
+                max_id = existing_ids[0].max()
+                next_num = int(max_id) + 1
+            else:
+                next_num = 1
+        else:
+            next_num = 1
+            
+        new_cust_id = f"C{next_num:03d}"
+        
+        new_row = pd.DataFrame([{
+            "customer_id": new_cust_id,
+            "name": name,
+            "city": city,
+            "phone": phone,
+            "opening_balance": float(opening_balance)
+        }])
+        
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        self._write_data("Customers", updated_df)
+        return new_cust_id
+
+    def get_all_customers(self):
+        df = self._read_data("Customers")
+        if df.empty:
+            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance"])
+        return df
+
+    def get_customer_balances(self):
+        # 1. Get all customers
+        customers = self.get_all_customers()
+        if customers.empty:
+            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "net_outstanding"])
+            
+        # 2. Get Ledger for all
+        ledger = self._read_data("Ledger")
+        
+        results = []
+        for _, cust in customers.iterrows():
+            c_name = cust['name']
+            c_open = float(cust['opening_balance']) if pd.notnull(cust['opening_balance']) else 0.0
+            
+            # Filter ledger for this customer
+            if not ledger.empty:
+                cust_ledger = ledger[ledger['party_name'] == c_name]
+                
+                # Calculate Totals
+                total_sales = cust_ledger[cust_ledger['debit'] > 0]['debit'].sum()
+                total_paid = cust_ledger[cust_ledger['credit'] > 0]['credit'].sum()
+                
+                # Net = Sales - Paid + Opening
+                # Wait: Sales (Debit) increases debt. Paid (Credit) reduces debt.
+                # Opening: Positive means they owe us (Debit nature).
+                net = total_sales - total_paid + c_open
+                
+                results.append({
+                    "customer_id": cust['customer_id'],
+                    "name": c_name,
+                    "city": cust['city'],
+                    "phone": cust['phone'],
+                    "total_sales": total_sales,
+                    "total_paid": total_paid,
+                    "opening_balance": c_open,
+                    "net_outstanding": net
+                })
+            else:
+                 # No ledger, just opening
+                 results.append({
+                    "customer_id": cust['customer_id'],
+                    "name": c_name,
+                    "city": cust['city'],
+                    "phone": cust['phone'],
+                    "total_sales": 0.0,
+                    "total_paid": 0.0,
+                    "opening_balance": c_open,
+                    "net_outstanding": c_open
+                })
+                
+        if not results:
+             return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding"])
+             
+        return pd.DataFrame(results)
+
+    # --- Reports & Analytics Methods ---
+    def add_expense(self, date_val, description, amount, category="Shop Expense"):
+        """
+        Records a shop expense.
+        """
+        df = self._read_data("Expenses")
+        if df.empty:
+            df = pd.DataFrame(columns=["id", "date", "description", "amount", "category"])
+            
+        new_id = self._get_next_id(df)
+        if not date_val:
+            date_val = datetime.now().strftime('%Y-%m-%d')
+        else:
+            date_val = str(date_val)
+            
+        new_row = pd.DataFrame([{
+            "id": new_id,
+            "date": date_val,
+            "description": description,
+            "amount": float(amount),
+            "category": category
+        }])
+        
+        updated_df = pd.concat([df, new_row], ignore_index=True)
+        self._write_data("Expenses", updated_df)
+
+    def get_expenses(self, date_str=None):
+        """
+        Get expenses, optionally filtered by date.
+        """
+        df = self._read_data("Expenses")
+        if df.empty:
+             return pd.DataFrame(columns=["id", "date", "description", "amount", "category"])
+             
+        if date_str:
+            df = df[df['date'] == str(date_str)]
+            
+        return df
+
+    def get_daily_cash_flow(self, date_val=None):
+        """
+        Returns (Cash In, Cash Out, Net Cash) for a specific date (default today).
+        Cash In: Sum of Ledger Credits (Payments Received) for that date.
+        Cash Out: Sum of Expenses for that date.
+        """
+        if not date_val:
+            date_val = datetime.now().strftime('%Y-%m-%d')
+        else:
+            date_val = str(date_val)
+            
+        # 1. Cash In (Ledger Credits)
+        ledger = self._read_data("Ledger")
+        cash_in = 0.0
+        if not ledger.empty:
+            # Filter by date and sum credits
+            # Note: stored dates might be strings.
+            day_txns = ledger[ledger['date'].astype(str) == date_val]
+            cash_in = day_txns['credit'].sum()
+            
+        # 2. Cash Out (Expenses)
+        # Note: We should ideally also check Ledger Debits if they represent cash out?
+        # Usually Ledger Debit = 'Sale' (Receivable), not cash out.
+        # But what if we pay a vendor? That would be a debit in vendor ledger?
+        # For this simple app, "Cash Out" is explicitly "Expenses" table.
+        expenses = self._read_data("Expenses")
+        cash_out = 0.0
+        if not expenses.empty:
+             day_exps = expenses[expenses['date'].astype(str) == date_val]
+             cash_out = day_exps['amount'].sum()
+             
+        net_cash = cash_in - cash_out
+        return cash_in, cash_out, net_cash
+
+    def get_customer_recovery_list(self):
+        """
+        Returns Customer Balances sorted by Highest Outstanding.
+        Includes calculated columns: Total Sales, Total Paid, Net Outstanding.
+        """
+        # Reuse existing logic but ensure correct sorting
+        df = self.get_customer_balances()
+        if df.empty:
+            return df
+            
+        # Sort descending by updated balance
+        df = df.sort_values(by='net_outstanding', ascending=False)
+        return df
+
+    def get_inventory_valuation(self):
+        """
+        Returns Total Stock Value = Sum(Quantity * Cost Price)
+        """
+        df = self._read_data("Inventory")
+        if df.empty:
+            return 0.0
+            
+        # Ensure numeric
+        df['quantity'] = pd.to_numeric(df['quantity'], errors='coerce').fillna(0)
+        df['cost_price'] = pd.to_numeric(df['cost_price'], errors='coerce').fillna(0.0)
+        
+        total_value = (df['quantity'] * df['cost_price']).sum()
+        return float(total_value)
