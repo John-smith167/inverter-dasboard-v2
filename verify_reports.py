@@ -36,26 +36,60 @@ def verify_backend():
     except Exception as e:
         print(f"❌ Cash Flow Test Failed: {e}")
 
-    # 3. Test Recovery List
-    print("\n3. Testing Customer Recovery List...")
+    # 3. Test Recovery List & Classification
+    print("\n3. Testing Customer Recovery List (Classification)...")
     try:
+        # Create Dummy Customer for Counting Test
+        dummy_name = "Test Counters"
+        db.add_customer(dummy_name, "Lab", "000", 0)
+        
+        # Add Transactions
+        db.add_ledger_entry(dummy_name, "Sold Inverter 5KW", 1000, 0, today)  # Inverter
+        db.add_ledger_entry(dummy_name, "Repair Charger", 500, 0, today)      # Charger
+        db.add_ledger_entry(dummy_name, "Solar Kit Complete", 5000, 0, today) # Kit
+        db.add_ledger_entry(dummy_name, "Misc Wiring", 200, 0, today)         # Other
+        db.add_ledger_entry(dummy_name, "Inverter Repair", 300, 0, today)     # Inverter (Count 2)
+        
         recovery = db.get_customer_recovery_list()
+        
         if not recovery.empty:
-            print(f"   Found {len(recovery)} customers.")
-            top_customer = recovery.iloc[0]
-            print(f"   Top Debt: {top_customer['name']} with {top_customer['net_outstanding']}")
-            
-            # Check sorting
-            if len(recovery) > 1:
-                assert recovery.iloc[0]['net_outstanding'] >= recovery.iloc[1]['net_outstanding'], "List not sorted by outstanding balance"
-            print("✅ Recovery List verified.")
+            # Find our dummy
+            dummy = recovery[recovery['name'] == dummy_name]
+            if not dummy.empty:
+                row = dummy.iloc[0]
+                print(f"   Counts -> Inv: {row['inverter_count']}, Chg: {row['charger_count']}, Kit: {row['kit_count']}, Oth: {row['other_count']}")
+                
+                assert row['inverter_count'] == 2, f"Expected 2 Inverters, got {row['inverter_count']}"
+                assert row['charger_count'] == 1, f"Expected 1 Charger, got {row['charger_count']}"
+                assert row['kit_count'] == 1, f"Expected 1 Kit, got {row['kit_count']}"
+                assert row['other_count'] == 1, f"Expected 1 Other, got {row['other_count']}"
+                print("✅ Category Counting verified.")
+            else:
+                 print("⚠️ Dummy customer not found in recovery list.")
         else:
-            print("⚠️ No customers found to test recovery list.")
+            print("⚠️ Recovery list empty.")
     except Exception as e:
         print(f"❌ Recovery List Test Failed: {e}")
 
-    # 4. Inventory Valuation
-    print("\n4. Testing Inventory Valuation...")
+    # 4. Test Employee Delete
+    print("\n4. Testing Employee Management...")
+    try:
+        db.add_employee("Temp Emp", "Manager", "123", 0, "CNIC")
+        emps = db.get_all_employees()
+        assert "Temp Emp" in emps['name'].values, "Employee not added"
+        
+        # Get ID
+        t_id = emps[emps['name'] == "Temp Emp"].iloc[0]['id']
+        db.delete_employee(t_id)
+        
+        emps_after = db.get_all_employees()
+        assert "Temp Emp" not in emps_after['name'].values, "Employee not deleted"
+        print("✅ Employee Add/Delete verified.")
+    except Exception as e:
+        print(f"❌ Employee Test Failed: {e}")
+
+    # 5. Inventory Valuation
+    print("\n5. Testing Inventory Valuation...")
     try:
         val = db.get_inventory_valuation()
         print(f"   Total Stock Value: {val}")

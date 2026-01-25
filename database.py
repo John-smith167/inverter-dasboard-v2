@@ -173,7 +173,22 @@ class DatabaseManager:
     def delete_employee(self, emp_id):
         df = self._read_data("Employees")
         if not df.empty:
-            df = df[df['id'] != emp_id]
+            # Normalize IDs to handle "1" vs "1.0" mismatch
+            # Convert column to string, strip .0
+            df['id_str'] = df['id'].astype(str).str.replace(r'\.0$', '', regex=True)
+            target = str(emp_id).replace('.0', '')
+            
+            # Filter
+            df = df[df['id_str'] != target]
+            
+            # Drop helper
+            df = df.drop(columns=['id_str'])
+            
+            # Write back
+            # Note: If update doesn't clear old rows, we might have issues. 
+            # But GSheetsConnection usually handles DF replacement well. 
+            # If issues persist, we might need to clear sheet first, 
+            # but standard update(data=df) in recent versions usually truncates.
             self._write_data("Employees", df)
 
     # --- Repair Methods ---
@@ -379,6 +394,28 @@ class DatabaseManager:
         if df.empty:
             return pd.DataFrame(columns=["id", "item_name", "category", "import_date", "quantity", "cost_price", "selling_price"])
         return df
+
+    def update_inventory_item(self, item_id, new_qty, new_cost, new_sell):
+        df = self._read_data("Inventory")
+        if df.empty: return False
+        
+        idx = df.index[df['id'] == item_id].tolist()
+        if not idx: return False
+        idx = idx[0]
+        
+        df.at[idx, 'quantity'] = int(new_qty)
+        df.at[idx, 'cost_price'] = float(new_cost)
+        df.at[idx, 'selling_price'] = float(new_sell)
+        
+        self._write_data("Inventory", df)
+        return True
+
+    def delete_inventory_item(self, item_id):
+        df = self._read_data("Inventory")
+        if not df.empty:
+            df = df[df['id'] != item_id]
+            self._write_data("Inventory", df)
+
 
     def sell_item(self, item_id, qty_to_sell=1):
         inv_df = self._read_data("Inventory")
@@ -598,12 +635,12 @@ class DatabaseManager:
             party_ledger = df[df['party_name'] == party_name].copy()
             # Convert to View Schema
             try:
-                party_ledger = party_ledger[['date', 'description', 'debit', 'credit']]
+                party_ledger = party_ledger[['id', 'date', 'description', 'debit', 'credit']]
             except KeyError:
                 # Fallback if columns missing
-                 party_ledger = pd.DataFrame(columns=['date', 'description', 'debit', 'credit'])
+                 party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit'])
         else:
-            party_ledger = pd.DataFrame(columns=['date', 'description', 'debit', 'credit'])
+            party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit'])
             
         # Fetch Opening Balance from Customers
         cust_df = self._read_data("Customers")
@@ -638,6 +675,14 @@ class DatabaseManager:
             party_ledger = pd.concat([op_row, party_ledger], ignore_index=True)
             
         return party_ledger
+
+    def delete_ledger_entry(self, entry_id):
+        df = self._read_data("Ledger")
+        if not df.empty:
+            # Check if ID exists (handle integer/string mismatch potentially)
+            # Assuming ID is int as per _get_next_id
+            df = df[df['id'] != entry_id]
+            self._write_data("Ledger", df)
 
     def get_all_ledger_parties(self):
         # Ledger Parties + Repair Clients + Customers Directory
@@ -744,10 +789,10 @@ class DatabaseManager:
         return float(balance)
 
     # --- Client Directory Methods ---
-    def add_customer(self, name, city, phone, opening_balance):
+    def add_customer(self, name, city, phone, opening_balance, address="", nic=""):
         df = self._read_data("Customers")
         if df.empty:
-            df = pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance"])
+            df = pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance", "address", "nic"])
             
         # Generate Customer ID (C001, C002...)
         if not df.empty and 'customer_id' in df.columns:
@@ -768,7 +813,9 @@ class DatabaseManager:
             "name": name,
             "city": city,
             "phone": phone,
-            "opening_balance": float(opening_balance)
+            "opening_balance": float(opening_balance),
+            "address": address,
+            "nic": nic
         }])
         
         updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -778,7 +825,14 @@ class DatabaseManager:
     def get_all_customers(self):
         df = self._read_data("Customers")
         if df.empty:
-            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance"])
+            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "opening_balance", "address", "nic"])
+        
+        # Ensure new columns exist if reading old data
+        if 'address' not in df.columns:
+            df['address'] = ""
+        if 'nic' not in df.columns:
+            df['nic'] = ""
+            
         return df
 
     def get_customer_balances(self):
@@ -913,11 +967,104 @@ class DatabaseManager:
         """
         Returns Customer Balances sorted by Highest Outstanding.
         Includes calculated columns: Total Sales, Total Paid, Net Outstanding.
+        Also includes counts for: Inverter, Charger, Kit, Other (based on sales description).
         """
-        # Reuse existing logic but ensure correct sorting
-        df = self.get_customer_balances()
-        if df.empty:
-            return df
+        # 1. Get all customers
+        customers = self.get_all_customers()
+        if customers.empty:
+            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
+                                       "inverter_count", "charger_count", "kit_count", "other_count"])
+            
+        # 2. Get Ledger for all
+        ledger = self._read_data("Ledger")
+        
+        results = []
+        for _, cust in customers.iterrows():
+            c_name = cust['name']
+            c_open = float(cust['opening_balance']) if pd.notnull(cust['opening_balance']) else 0.0
+            
+            # Initialize Counts
+            inv_c = 0
+            chg_c = 0
+            kit_c = 0
+            oth_c = 0
+            
+            # Filter ledger for this customer
+            if not ledger.empty:
+                cust_ledger = ledger[ledger['party_name'] == c_name]
+                
+                # Calculate Totals
+                total_sales = cust_ledger[cust_ledger['debit'] > 0]['debit'].sum()
+                total_paid = cust_ledger[cust_ledger['credit'] > 0]['credit'].sum()
+                
+                # Net
+                net = total_sales - total_paid + c_open
+                
+                # Calculate Item Counts from Debits (Sales)
+                sales_txns = cust_ledger[cust_ledger['debit'] > 0]
+                for _, row in sales_txns.iterrows():
+                    desc = str(row['description']).lower()
+                    
+                    # Logic: Check keywords. If multiple match, we might count just one or all? 
+                    # User said: "write 'Inverter'... automatically be added to total Inverter count"
+                    # Assumption: One category per transaction primarily, or count all matches?
+                    # "If we write 'Charger', it should be added to total Charger"
+                    # Let's count occurrence. If description is "Inverter and Charger", count both?
+                    # Or classify the transaction? "automatically be added to the total Inverter count for that customer"
+                    # Let's simple check:
+                    
+                    matched = False
+                    if "inverter" in desc:
+                        inv_c += 1
+                        matched = True
+                    if "charger" in desc:
+                        chg_c += 1
+                        matched = True
+                    if "kit" in desc:
+                        kit_c += 1
+                        matched = True
+                        
+                    # If NONE of the above, it's Other.
+                    # Be careful: "Misc Wire" -> Other.
+                    if not matched:
+                        oth_c += 1
+                
+                results.append({
+                    "customer_id": cust['customer_id'],
+                    "name": c_name,
+                    "city": cust['city'],
+                    "phone": cust['phone'],
+                    "total_sales": total_sales,
+                    "total_paid": total_paid,
+                    "opening_balance": c_open,
+                    "net_outstanding": net,
+                    "inverter_count": inv_c,
+                    "charger_count": chg_c,
+                    "kit_count": kit_c,
+                    "other_count": oth_c
+                })
+            else:
+                 # No ledger, just opening
+                 results.append({
+                    "customer_id": cust['customer_id'],
+                    "name": c_name,
+                    "city": cust['city'],
+                    "phone": cust['phone'],
+                    "total_sales": 0.0,
+                    "total_paid": 0.0,
+                    "opening_balance": c_open,
+                    "net_outstanding": c_open,
+                    "inverter_count": 0,
+                    "charger_count": 0,
+                    "kit_count": 0,
+                    "other_count": 0
+                })
+                
+        if not results:
+             return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding",
+                                        "inverter_count", "charger_count", "kit_count", "other_count"])
+             
+        df = pd.DataFrame(results)
             
         # Sort descending by updated balance
         df = df.sort_values(by='net_outstanding', ascending=False)

@@ -9,6 +9,7 @@ import time
 import urllib.parse
 import qrcode
 from io import BytesIO
+import os
 
 # Initialize Database
 # Check for secrets (support both new connections.gsheets and legacy gsheets)
@@ -30,7 +31,11 @@ def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, 
     
     # Header
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="INVERTER PRO SERVICES", ln=True, align='C')
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 33)
+        pdf.set_y(25)  # Adjust Y to be below logo
+    
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
     validation = "FINAL INVOICE" if is_final else "DRAFT ESTIMATE"
@@ -71,47 +76,153 @@ def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, 
     return pdf.output(dest='S').encode('latin-1')
 
 def create_ledger_pdf(party_name, ledger_df, final_balance):
+    # Fetch Customer Details from DB
+    customers = db.get_all_customers()
+    c_row = None
+    if not customers.empty:
+        matches = customers[customers['name'] == party_name]
+        if not matches.empty:
+            c_row = matches.iloc[0]
+            
+    c_address = c_row['address'] if c_row is not None and pd.notna(c_row.get('address')) else ""
+    c_nic = c_row['nic'] if c_row is not None and pd.notna(c_row.get('nic')) else ""
+    c_phone = c_row['phone'] if c_row is not None and pd.notna(c_row.get('phone')) else ""
+    
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
     
-    # Header
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="INVERTER PRO SERVICES", ln=True, align='C')
+    # --- HEADER SECTION (Figure 2 Style) ---
+    # Logo
+    if os.path.exists("logo.png"): 
+        pdf.image("logo.png", 10, 8, 33)
+    
+    pdf.set_y(15) # Ensure title is not covered
+    pdf.set_font("Arial", 'B', 20)
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    
     pdf.set_font("Arial", size=10)
-    pdf.cell(200, 10, txt="ACCOUNT STATEMENT / LEDGER", ln=True, align='C')
-    pdf.ln(10)
+    pdf.cell(0, 5, txt="Shah Faisal Gala Mandi Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Seetal Das: 0333-7222122", ln=True, align='C')
+    pdf.cell(0, 5, txt="Ananad Kumar: 0336-0080003", ln=True, align='C')
+    pdf.cell(0, 5, txt="Ph: 0723-662227", ln=True, align='C')
     
-    # Client Info
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt=f"Account: {party_name}", ln=True)
-    pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d')}", ln=True)
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 8, txt="Sales Invoice / Ledger Statement", ln=True, align='C') # Using Generic Title or "Sales Invoice" as per req
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y()) # Line below title
     pdf.ln(5)
     
-    # Table Header
-    pdf.set_fill_color(220, 220, 220)
+    # --- CUSTOMER DETAILS SECTION ---
+    # Left Side: Customer Info
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(30, 10, "Date", 1, 0, 'C', 1)
-    pdf.cell(80, 10, "Description", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Debit", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Credit", 1, 0, 'C', 1)
-    pdf.cell(30, 10, "Balance", 1, 1, 'C', 1)
+    pdf.cell(25, 6, "Customer:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, party_name, 0, 0) # Name
     
-    # Rows
-    pdf.set_font("Arial", size=9)
+    # Right Side: Date
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Date:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, datetime.now().strftime('%d-%m-%Y'), 0, 1)
+    
+    # Line 2: Address
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(25, 6, "Address:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, c_address, 0, 1)
+    
+    # Line 3: NIC & Mobile
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(25, 6, "NIC #:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(60, 6, c_nic, 0, 0)
+    
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Mobile #:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, c_phone, 0, 1)
+    
+    pdf.ln(5)
+    
+    # --- TABLE HEADER ---
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 9)
+    # Widths: Date(25), Description(85), Debit(25), Credit(25), Balance(30) => 190 total
+    pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Date", 1, 0, 'C', 1)
+    pdf.cell(80, 8, "Item / Description", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Debit", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Credit", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Balance", 1, 1, 'C', 1)
+    
+    # --- TABLE ROWS ---
+    pdf.set_font("Arial", size=8)
+    idx_counter = 1
     for _, row in ledger_df.iterrows():
         # Handle date object
         d_str = str(row['date'])
-        pdf.cell(30, 10, d_str, 1)
-        pdf.cell(80, 10, str(row['description'])[:45], 1) # Truncate long desc
-        pdf.cell(25, 10, f"{row['debit']:,.0f}", 1, 0, 'R')
-        pdf.cell(25, 10, f"{row['credit']:,.0f}", 1, 0, 'R')
-        pdf.cell(30, 10, f"{row['Balance']:,.0f}", 1, 1, 'R')
         
-    pdf.ln(5)
+        pdf.cell(10, 6, str(idx_counter), 1, 0, 'C')
+        pdf.cell(25, 6, d_str, 1, 0, 'C')
+        
+        # Truncate Desc
+        desc_text = str(row['description'])
+        if len(desc_text) > 42: desc_text = desc_text[:40] + ".."
+        pdf.cell(80, 6, desc_text, 1, 0, 'L')
+        
+        # Numbers
+        debit_val = row['debit']
+        credit_val = row['credit']
+        bal_val = row['Balance'] # Assuming Balance calc passed in df or we assume column exists
+        # Note: If 'Balance' col not in df, ensure logic handles it. 
+        # The caller (main.py) usually prepares df with Balance.
+        
+        pdf.cell(25, 6, f"{debit_val:,.0f}" if debit_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(25, 6, f"{credit_val:,.0f}" if credit_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(25, 6, f"{bal_val:,.0f}", 1, 1, 'R')
+        
+        idx_counter += 1
+        
+    pdf.ln(2)
+    
+    # --- TOTALS BOX ---
+    # Bottom Right
+    pdf.set_x(100) # Move to right half
+    pdf.set_font("Arial", 'B', 10)
+    
+    # Calculate totals for display if needed, or just show Final Balance
+    total_debit = ledger_df['debit'].sum()
+    total_credit = ledger_df['credit'].sum()
+    
+    # Draw Summary Box
+    # pdf.rect(pdf.get_x(), pdf.get_y(), 90, 25)
+    
+    pdf.cell(50, 6, "Total Debit:", 0, 0, 'R')
+    pdf.cell(40, 6, f"{total_debit:,.0f}", 0, 1, 'R')
+    
+    pdf.set_x(100)
+    pdf.cell(50, 6, "Total Credit:", 0, 0, 'R')
+    pdf.cell(40, 6, f"{total_credit:,.0f}", 0, 1, 'R')
+    
+    pdf.line(110, pdf.get_y()+1, 200, pdf.get_y()+1)
+    pdf.ln(2)
+    
+    pdf.set_x(100)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(130, 10, "Net Pending Balance:", 0, 0, 'R')
-    pdf.cell(60, 10, f"Rs. {final_balance:,.2f}", 1, 1, 'C') # Boxed total
+    pdf.cell(50, 8, "Net Balance:", 0, 0, 'R')
+    pdf.cell(40, 8, f"{final_balance:,.0f}", 1, 1, 'R', fill=True) 
+    
+    pdf.ln(10)
+    
+    # Amount in Words (Placeholder)
+    # pdf.set_font("Arial", 'I', 9)
+    # pdf.cell(0, 6, "Amount (in Words): __________________________________________", 0, 1)
+    
+    # Signatures
+    pdf.set_y(-30)
+    pdf.set_font("Arial", 'B', 9)
+    pdf.cell(90, 10, "Prepared By: _________________", 0, 0, 'L')
+    pdf.cell(0, 10, "Receiver Signature: _________________", 0, 1, 'R')
     
     return pdf.output(dest='S').encode('latin-1')
 
@@ -122,10 +233,16 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
     
     # Header
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="INVERTER PRO SERVICES", ln=True, align='C')
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 33)
+        pdf.set_y(25)
+
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
+    pdf.cell(200, 5, txt="Owner: Saad Rao | Contact: 0300-1234567", ln=True, align='C')  # Placeholder number
+    pdf.ln(5)
     pdf.cell(200, 10, txt="EMPLOYEE PAYROLL STATEMENT", ln=True, align='C')
-    pdf.ln(10)
+    pdf.ln(5)
     
     # Employee Info
     pdf.set_font("Arial", 'B', 12)
@@ -181,7 +298,11 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
 
     # Header
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="INVERTER PRO SERVICES", ln=True, align='C')
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 33)
+        pdf.set_y(25)
+
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
     pdf.cell(200, 10, txt="SALES INVOICE", ln=True, align='C')
     pdf.ln(5)
@@ -244,7 +365,7 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
 
 
 # Page Config
-st.set_page_config(page_title="Inverter Pro Manager", layout="wide", page_icon="⚡", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SK INVERTX TRADERS", layout="wide", page_icon="⚡", initial_sidebar_state="expanded")
 
 # --- INTERACTIVE DIALOGS ---
 @st.dialog("Repair Job Manager")
@@ -353,7 +474,7 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
         clean_phone = "92" + clean_phone[1:]
     
     # Message
-    msg_text = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - Inverter Pro"
+    msg_text = f"Assalam-o-Alaikum {client_name}! Your Inverter ({model}) is ready. Total Bill: Rs. {total_bill_val}. Please collect before 8 PM. - SK INVERTX TRADERS"
     encoded_msg = urllib.parse.quote(msg_text)
     
     # URL
@@ -362,21 +483,30 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     st.link_button("🟢 Open in WhatsApp", whatsapp_url, use_container_width=True)
 
 @st.dialog("Stock Control")
-def inventory_dialog(item_id, item_name, current_price, current_qty):
+def inventory_dialog(item_id, item_name, current_price, current_cost, current_qty):
     st.header(f"📦 {item_name}")
-    st.caption(f"Current Stock: {current_qty} | Price: Rs. {current_price}")
+    st.caption(f"Stock: {current_qty} | Sell: {current_price} | Cost: {current_cost}")
     
     with st.form("stock_update"):
-        new_price = st.number_input("Selling Price (Rs.)", value=float(current_price))
-        add_qty = st.number_input("Add Stock (Quantity to Add)", min_value=0, value=0, step=1)
+        c1, c2 = st.columns(2)
+        new_price = c1.number_input("Selling Price", value=float(current_price))
+        new_cost = c2.number_input("Cost Price", value=float(current_cost) if pd.notnull(current_cost) else 0.0)
+        
+        c3, c4 = st.columns(2)
+        add_qty = c3.number_input("Add Qty", min_value=0, value=0, step=1)
+        del_qty = c4.number_input("Remove Qty", min_value=0, value=0, step=1)
         
         if st.form_submit_button("Update Inventory"):
-            # Logic to update DB
-            with db.get_connection() as conn:
-                conn.execute("UPDATE inventory SET selling_price = ?, quantity = quantity + ? WHERE id = ?", (new_price, add_qty, item_id))
-                conn.commit()
+            final_qty = max(0, current_qty + add_qty - del_qty)
+            db.update_inventory_item(item_id, final_qty, new_cost, new_price)
             st.success(f"Updated {item_name}!")
             st.rerun()
+
+    st.divider()
+    if st.button("❌ Delete Item", type="primary", use_container_width=True):
+         db.delete_inventory_item(item_id)
+         st.success("Item Deleted!")
+         st.rerun()
 
 
 
@@ -387,8 +517,13 @@ def add_client_dialog():
     
     with st.form("new_client_form"):
         name = st.text_input("Business / Client Name (Required)")
-        city = st.text_input("City / Location", "Ghotki")
-        phone = st.text_input("Phone Number")
+        col_c1, col_c2 = st.columns(2)
+        city = col_c1.text_input("City", "Ghotki")
+        phone = col_c2.text_input("Phone Number")
+        
+        col_c3, col_c4 = st.columns(2)
+        address = col_c3.text_input("Address")
+        nic = col_c4.text_input("NIC #")
         
         st.divider()
         st.markdown("**💰 Opening Balance (Old Khata)**")
@@ -397,7 +532,7 @@ def add_client_dialog():
         
         if st.form_submit_button("Create Client Profile", type="primary", use_container_width=True):
             if name:
-                new_id = db.add_customer(name, city, phone, opening_bal)
+                new_id = db.add_customer(name, city, phone, opening_bal, address, nic)
                 st.success(f"✅ Client '{name}' Created! ID: {new_id}")
                 time.sleep(1)
                 st.rerun()
@@ -440,6 +575,17 @@ def employee_dialog(emp_id, emp_name, emp_role, emp_phone, emp_cnic):
     else:
         st.info("No completed jobs yet.")
 
+    st.divider()
+    if st.button("🗑️ Delete Employee", key=f"del_emp_{emp_id}"):
+        st.error("Are you sure you want to delete this employee?")
+        c1, c2 = st.columns(2)
+        if c1.button("Yes, Delete", key=f"conf_del_{emp_id}", type="primary"):
+            db.delete_employee(emp_id)
+            st.success("Employee Deleted!")
+            st.rerun()
+        if c2.button("Cancel", key=f"canc_del_{emp_id}"):
+             st.rerun()
+
 @st.dialog("Employee Payroll Manager")
 def employee_payroll_dialog(emp_id, emp_name):
     st.caption(f"💰 Payroll & Ledger for {emp_name}")
@@ -451,6 +597,19 @@ def employee_payroll_dialog(emp_id, emp_name):
     with tab1:
         st.markdown("### Log Work Completed")
         
+        # Calculator Helper
+        with st.expander("🧮 Calculator"):
+            calc1, calc2 = st.columns(2)
+            v1 = calc1.number_input("Val 1", 0.0, step=10.0, key="c_v1")
+            v2 = calc2.number_input("Val 2", 0.0, step=10.0, key="c_v2")
+            op = st.radio("Op", ["+", "-", "*", "/"], horizontal=True, label_visibility="collapsed")
+            res = 0
+            if op == "+": res = v1 + v2
+            elif op == "-": res = v1 - v2
+            elif op == "*": res = v1 * v2
+            elif op == "/" and v2 != 0: res = v1 / v2
+            st.markdown(f"**Result:** {res}")
+
         with st.form("log_work_form"):
             w_date = st.date_input("Date", value=datetime.now().date())
             
@@ -458,18 +617,24 @@ def employee_payroll_dialog(emp_id, emp_name):
             units = col1.number_input("Units Fixed", min_value=0, value=0, step=1)
             rate = col2.number_input("Rate per Unit (Rs.)", min_value=0.0, value=100.0, step=10.0)
             
+            # Additional Description
+            desc_input = st.text_input("Description (Optional)", placeholder="e.g. Model XYZ, Overtime...")
+
             # Auto-calculate
             total_earning = units * rate
             st.markdown(f"### 💰 Total Earning: **Rs. {total_earning:,.2f}**")
             
             if st.form_submit_button("Add to Ledger", type="primary", use_container_width=True):
-                if units > 0:
+                if units > 0 or total_earning > 0: # Allow simple manual earning entry if units=0?
                     description = f"Fixed {units} Units @ Rs.{rate}"
+                    if desc_input:
+                        description += f" - {desc_input}"
+                        
                     db.add_employee_ledger_entry(emp_name, w_date, "Work Log", description, total_earning, 0.0)
                     st.success(f"✅ Work log added! Earned: Rs. {total_earning:,.2f}")
                     st.rerun()
                 else:
-                    st.error("Units must be greater than 0")
+                    st.error("Units or Amount must be greater than 0")
     
     # TAB 2: Record Payment
     with tab2:
@@ -499,8 +664,24 @@ def employee_payroll_dialog(emp_id, emp_name):
         
         if not ledger_df.empty:
             # Display Table
-            display_df = ledger_df[['date', 'type', 'description', 'earned', 'paid']].copy()
+            ledger_df['Running Balance'] = (ledger_df['earned'].cumsum() - ledger_df['paid'].cumsum()) # Note: This might depend on sort order.
+            # Ledger is returned sorted by Date DESC (newest first). 
+            # Cumsum on newest first is confusing for running balance.
+            # We should sort ASC for calculation, then optionally sort back or just show ASC.
+            ledger_df_asc = ledger_df.sort_values(by=['date', 'id'], ascending=True)
+            ledger_df_asc['Running Balance'] = (ledger_df_asc['earned'] - ledger_df_asc['paid']).cumsum()
             
+            # We show Descending usually?
+            display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=False)[['date', 'type', 'description', 'earned', 'paid', 'Running Balance']]
+            
+            
+            @st.dialog("Full Ledger History", width="large")
+            def show_full_history(df):
+                st.dataframe(df, use_container_width=True, height=600)
+
+            if st.button("🔍 View Full Screen"):
+                show_full_history(display_df)
+
             st.dataframe(
                 display_df, 
                 use_container_width=True, 
@@ -511,6 +692,7 @@ def employee_payroll_dialog(emp_id, emp_name):
                     "description": "Description",
                     "earned": st.column_config.NumberColumn("Earned", format="Rs. %.0f"),
                     "paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
+                    "Running Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
                 }
             )
             
@@ -529,11 +711,7 @@ def employee_payroll_dialog(emp_id, emp_name):
                 balance_label = "Settled"
             
             st.markdown(f"""
-            <div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:2px solid {balance_color}; text-align:center; margin-top:20px;">
-                <div style="font-size:0.9rem; color:#a9b1d6; margin-bottom:5px;">{balance_icon} {balance_label}</div>
-                <div style="font-size:2.5rem; font-weight:bold; color:{balance_color}">Rs. {abs(balance):,.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
+<div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:2px solid {balance_color}; text-align:center; margin-top:20px;"><div style="font-size:0.9rem; color:#a9b1d6; margin-bottom:5px;">{balance_icon} {balance_label}</div><div style="font-size:2.5rem; font-weight:bold; color:{balance_color}">Rs. {abs(balance):,.2f}</div></div>""", unsafe_allow_html=True)
             
             # PDF Download
             st.write("")
@@ -652,9 +830,15 @@ def update_nav():
 
 # --- SIDEBAR NAV ---
 with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/3665/3665922.png", width=50) # Placeholder Logo
-    st.markdown("### INVERTER PRO")
-    st.caption("v4.5 · Final Release")
+    if os.path.exists("logo_sidebar.png"):
+        st.image("logo_sidebar.png", width=150)
+    elif os.path.exists("logo.png"):
+        st.image("logo.png", width=120)
+    else:
+        st.image("https://cdn-icons-png.flaticon.com/512/3665/3665922.png", width=50) # Fallback
+        
+    st.markdown("### SK INVERTX TRADERS")
+    st.caption("Traders")
     st.markdown("---")
     
     # Navigation Pills
@@ -801,12 +985,7 @@ if menu == "⚡ Quick Invoice":
         
     with fc3:
         grand_total = subtotal + freight + misc
-        st.markdown(f"""
-        <div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;">
-            <div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div>
-            <div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
         
         st.write("")
         if st.button("✅ Save & Print", type="primary", use_container_width=True):
@@ -1042,20 +1221,7 @@ elif menu == "🔧 Repair Center":
                         badge_text = "No Date"
                     
                     # Render Card
-                    st.markdown(f"""
-                    <div class="modern-card" style="border-top: 5px solid {status_color};">
-                        <div style="display:flex; justify-content:space-between;">
-                            <span style="font-weight:bold; color:#a9b1d6;">#{row['id']}</span>
-                            <span style="background:{status_color}33; color:{status_color}; padding:2px 8px; border-radius:4px; font-size:0.8rem;">{row['status']}</span>
-                        </div>
-                        <div class="big-text" style="margin-top:10px;">{row['client_name']}</div>
-                        <div class="sub-text">📱 {row['inverter_model']}</div>
-                        <div class="sub-text">🔧 {row['assigned_to']}</div>
-                        <div class="sub-text" style="margin-top:10px; font-weight:bold; color:{status_color};">
-                            {badge_text}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"""<div class="modern-card" style="border-top: 5px solid {status_color};"><div style="display:flex; justify-content:space-between;"><span style="font-weight:bold; color:#a9b1d6;">#{row['id']}</span><span style="background:{status_color}33; color:{status_color}; padding:2px 8px; border-radius:4px; font-size:0.8rem;">{row['status']}</span></div><div class="big-text" style="margin-top:10px;">{row['client_name']}</div><div class="sub-text">📱 {row['inverter_model']}</div><div class="sub-text">🔧 {row['assigned_to']}</div><div class="sub-text" style="margin-top:10px; font-weight:bold; color:{status_color};">{badge_text}</div></div>""", unsafe_allow_html=True)
                     
                     # ACTION: Open Dialog
                     if st.button(f"Manage {row['client_name']}", key=f"btn_{row['id']}", use_container_width=True):
@@ -1089,14 +1255,7 @@ elif menu == "🔧 Repair Center":
             h_cols = st.columns(3)
             for idx, row in history.iterrows():
                 with h_cols[idx % 3]:
-                    st.markdown(f"""
-                    <div class="modern-card" style="border-left: 4px solid #9ece6a;">
-                        <div class="big-text">{row['client_name']}</div>
-                        <div class="sub-text">{row['inverter_model']}</div>
-                        <div class="sub-text">Completed: {row['completion_date']}</div>
-                        <div class="price-text" style="text-align:right; margin-top:10px;">Rs. {row['total_cost']:,.2f}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"""<div class="modern-card" style="border-left: 4px solid #9ece6a;"><div class="big-text">{row['client_name']}</div><div class="sub-text">{row['inverter_model']}</div><div class="sub-text">Completed: {row['completion_date']}</div><div class="price-text" style="text-align:right; margin-top:10px;">Rs. {row['total_cost']:,.2f}</div></div>""", unsafe_allow_html=True)
                     
                     # Invoice Button
                     if st.button("📄 Get Invoice", key=f"hist_inv_{row['id']}", use_container_width=True):
@@ -1116,27 +1275,50 @@ elif menu == "🔧 Repair Center":
 elif menu == "📦 Product Inventory":
     st.title("📦 Product Inventory")
     
-    # 1. Add Stock Area (Collapsible)
-    with st.expander("➕ Add New Stock Item"):
-        with st.form("add_stock"):
-            c1, c2, c3 = st.columns(3)
-            i_name = c1.text_input("Item Name")
-            cat = c2.selectbox("Category", ["Inverter", "Battery", "Panel", "Spare"])
-            qty = c3.number_input("Qty", 1, 1000)
-            p_cost = c1.number_input("Cost Price", 0.0)
-            p_sell = c2.number_input("Selling Price", 0.0)
-            if st.form_submit_button("Add Item"):
-                db.add_inventory_item(i_name, cat, datetime.now(), qty, p_cost, p_sell)
-                st.success("Added!")
+    # 1. Add Stock Area (Calculator Mode)
+    with st.expander("➕ Add New Stock Item", expanded=True):
+        c1, c2, c3 = st.columns(3)
+        i_name = c1.text_input("Item Name", key="new_i_name")
+        cat = c2.text_input("Category", placeholder="e.g. Battery", key="new_i_cat")
+        qty = c3.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
+        
+        c4, c5 = st.columns(2)
+        p_cost = c4.number_input("Cost Price (Rs.)", 0.0, step=10.0, key="new_i_cost")
+        p_sell = c5.number_input("Selling Price (Rs.)", 0.0, step=10.0, key="new_i_sell")
+        
+        # Calculator Display
+        tot_cost = qty * p_cost
+        tot_sell = qty * p_sell
+        
+        st.markdown(f"""
+<div style="padding:10px; background:#1a1c24; border-radius:8px; margin-bottom:10px;">
+<span style="color:#a9b1d6; margin-right:15px;">📊 Calculator:</span>
+<strong style="color:#f7768e">Total Cost: Rs. {tot_cost:,.0f}</strong> &nbsp;|&nbsp; 
+<strong style="color:#9ece6a">Total Selling: Rs. {tot_sell:,.0f}</strong>
+</div>
+""", unsafe_allow_html=True)
+
+        if st.button("Add Item", type="primary"):
+            if i_name:
+                db.add_inventory_item(i_name, cat if cat else "General", datetime.now(), qty, p_cost, p_sell)
+                st.success("Item Added Successfully!")
+                time.sleep(0.5)
                 st.rerun()
+            else:
+                st.error("Item Name is required.")
 
     # 2. Search & Filter
-    search_inv = st.text_input("Search Inventory", placeholder="Search inventory...")
+    st.divider()
+    search_inv = st.text_input("Search (Name, Category, or ID)", placeholder="Type to search...")
     
     inv = db.get_inventory()
     if not inv.empty:
         if search_inv:
-            inv = inv[inv['item_name'].str.contains(search_inv, case=False)]
+            # Flexible Search
+            mask = inv.apply(lambda x: search_inv.lower() in str(x['item_name']).lower() or 
+                                     search_inv.lower() in str(x['category']).lower() or 
+                                     search_inv.lower() in str(x['id']).lower(), axis=1)
+            inv = inv[mask]
         
         # Grid Layout
         i_cols = st.columns(3)
@@ -1146,20 +1328,15 @@ elif menu == "📦 Product Inventory":
                 low_stock = row['quantity'] < 5
                 stock_color = "#f7768e" if low_stock else "#9ece6a"
                 
-                st.markdown(f"""
-                <div class="modern-card">
-                    <div class="big-text">{row['item_name']}</div>
-                    <div class="sub-text">{row['category']}</div>
-                    <div style="display:flex; justify-content:space-between; margin-top:10px;">
-                        <span class="price-text">Rs. {row['selling_price']}</span>
-                        <span style="color:{stock_color}; font-weight:bold;">{row['quantity']} Units</span>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                # Calculating Totals for Display
+                t_cost = row['quantity'] * row['cost_price']
+                t_sell = row['quantity'] * row['selling_price']
+                
+                st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">#{row['id']}</span><span class="sub-text">{row['category']}</span></div><div class="big-text">{row['item_name']}</div><div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.9rem;"><span>Cost: Rs. {row['cost_price']}</span><span>Sell: Rs. {row['selling_price']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px; font-size:0.9rem;"><span>T.Cost: Rs. {t_cost:,.0f}</span><span>T.Sell: Rs. {t_sell:,.0f}</span></div><div style="margin-top:10px; padding-top:10px; border-top:1px solid #2c2f3f; text-align:right;"><span style="color:{stock_color}; font-weight:bold; font-size:1.1rem;">{row['quantity']} Units</span></div></div>""", unsafe_allow_html=True)
                 
                 # ACTION: Open Dialog
-                if st.button(f"✏ Edit", key=f"inv_btn_{row['id']}", use_container_width=True):
-                    inventory_dialog(row['id'], row['item_name'], row['selling_price'], row['quantity'])
+                if st.button(f"✏ Manage", key=f"inv_btn_{row['id']}", use_container_width=True):
+                    inventory_dialog(row['id'], row['item_name'], row['selling_price'], row['cost_price'], row['quantity'])
     else:
         st.info("Inventory Empty.")
 
@@ -1214,26 +1391,11 @@ elif menu == "📊 Business Reports":
     # 3 KEY CARDS
     kc1, kc2, kc3 = st.columns(3)
     with kc1:
-        st.markdown(f"""
-        <div class="modern-card" style="text-align:center;">
-             <div class="sub-text">Active Repairs</div>
-             <div style="font-size:2.5rem; font-weight:bold; color:#7aa2f7;">{active_count}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Active Repairs</div><div style="font-size:2.5rem; font-weight:bold; color:#7aa2f7;">{active_count}</div></div>""", unsafe_allow_html=True)
     with kc2:
-        st.markdown(f"""
-        <div class="modern-card" style="text-align:center;">
-             <div class="sub-text">Upcoming Due (2 Days)</div>
-             <div style="font-size:2.5rem; font-weight:bold; color:#e0af68;">{upcoming_count}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Upcoming Due (2 Days)</div><div style="font-size:2.5rem; font-weight:bold; color:#e0af68;">{upcoming_count}</div></div>""", unsafe_allow_html=True)
     with kc3:
-        st.markdown(f"""
-        <div class="modern-card" style="text-align:center;">
-             <div class="sub-text">Low Stock Alerts</div>
-             <div style="font-size:2.5rem; font-weight:bold; color:#f7768e;">{low_stock}</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Low Stock Alerts</div><div style="font-size:2.5rem; font-weight:bold; color:#f7768e;">{low_stock}</div></div>""", unsafe_allow_html=True)
     
     st.markdown("---")
 
@@ -1306,7 +1468,41 @@ elif menu == "📊 Business Reports":
     
     st.divider()
     
-    # --- SECTION C: FINANCIAL REPORTS (Existing Reports Tab) ---
+    st.divider()
+
+    # --- SECTION C: STOCK VALUATION REPORT (NEW) ---
+    st.header("📦 Detailed Stock Valuation")
+    
+    stock_inv = db.get_inventory()
+    if not stock_inv.empty:
+        # Prepare Data
+        stock_inv['Total Cost'] = stock_inv['quantity'] * stock_inv['cost_price']
+        stock_inv['Total Selling'] = stock_inv['quantity'] * stock_inv['selling_price']
+        
+        # Display
+        st.dataframe(
+            stock_inv[['id', 'item_name', 'category', 'quantity', 'cost_price', 'selling_price', 'Total Cost', 'Total Selling']],
+            use_container_width=True,
+            column_config={
+                "cost_price": st.column_config.NumberColumn("Cost Price", format="Rs. %.0f"),
+                "selling_price": st.column_config.NumberColumn("Selling Price", format="Rs. %.0f"),
+                "Total Cost": st.column_config.NumberColumn("Total Cost Value", format="Rs. %.0f"),
+                "Total Selling": st.column_config.NumberColumn("Total Sales Value", format="Rs. %.0f"),
+            }
+        )
+        
+        # Totals
+        g_total_cost = stock_inv['Total Cost'].sum()
+        g_total_sell = stock_inv['Total Selling'].sum()
+        
+        st.markdown(f"""<div style="display:flex; gap:20px; justify-content:flex-end; margin-top:10px;"><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #f7768e;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Stock Cost</span><br><span style="color:#f7768e; font-size:1.5rem; font-weight:bold;">Rs. {g_total_cost:,.0f}</span></div><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #9ece6a;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Sales Potential</span><br><span style="color:#9ece6a; font-size:1.5rem; font-weight:bold;">Rs. {g_total_sell:,.0f}</span></div></div>""", unsafe_allow_html=True)
+        
+    else:
+        st.info("No stock data available.")
+    
+    st.divider()
+    
+    # --- SECTION D: FINANCIAL REPORTS ---
     st.header("💵 Daily Cash Book")
     
     # Date Selector
@@ -1314,33 +1510,22 @@ elif menu == "📊 Business Reports":
     
     # Fetch Data
     cash_in, cash_out, net_cash = db.get_daily_cash_flow(report_date)
+
+    # 1. ADD AUTO CALCULATOR ROW FOR TOTAL EXPENSES
+    # We display it prominently even before the table if needed, or after.
+
     
     # Display Metrics
     r_col1, r_col2, r_col3 = st.columns(3)
     with r_col1:
-         st.markdown(f"""
-        <div class="modern-card" style="text-align:center; border-left: 5px solid #9ece6a;">
-             <div class="sub-text">🟢 Cash Received</div>
-             <div style="font-size:2rem; font-weight:bold; color:#9ece6a;">Rs. {cash_in:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+         st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #9ece6a;"><div class="sub-text">🟢 Cash Received</div><div style="font-size:2rem; font-weight:bold; color:#9ece6a;">Rs. {cash_in:,.0f}</div></div>""", unsafe_allow_html=True)
          
     with r_col2:
-         st.markdown(f"""
-        <div class="modern-card" style="text-align:center; border-left: 5px solid #f7768e;">
-             <div class="sub-text">🔴 Shop Expenses</div>
-             <div style="font-size:2rem; font-weight:bold; color:#f7768e;">Rs. {cash_out:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+         st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid #f7768e;"><div class="sub-text">🔴 Shop Expenses</div><div style="font-size:2rem; font-weight:bold; color:#f7768e;">Rs. {cash_out:,.0f}</div></div>""", unsafe_allow_html=True)
          
     with r_col3:
          net_color = "#7aa2f7" if net_cash >= 0 else "#f7768e"
-         st.markdown(f"""
-        <div class="modern-card" style="text-align:center; border-left: 5px solid {net_color};">
-             <div class="sub-text">💰 Net Cash in Drawer</div>
-             <div style="font-size:2rem; font-weight:bold; color:{net_color};">Rs. {net_cash:,.0f}</div>
-        </div>
-        """, unsafe_allow_html=True)
+         st.markdown(f"""<div class="modern-card" style="text-align:center; border-left: 5px solid {net_color};"><div class="sub-text">💰 Net Cash in Drawer</div><div style="font-size:2rem; font-weight:bold; color:{net_color};">Rs. {net_cash:,.0f}</div></div>""", unsafe_allow_html=True)
 
     # Add Expense Dialog/Expander
     with st.expander("➕ Record Shop Expense"):
@@ -1362,7 +1547,11 @@ elif menu == "📊 Business Reports":
     if not expenses_df.empty:
          st.markdown("### Expense Details")
          st.dataframe(expenses_df[['description', 'amount', 'category']], use_container_width=True)
-
+         
+         # Total Amount (Auto Calculator)
+         total_exp_day = expenses_df['amount'].sum()
+         st.markdown(f"""<div style="text-align:right; font-size:1.2rem; font-weight:bold; margin-top:5px; padding:10px; background:#1a1c24; border-radius:8px;">Total Expenses: <span style="color:#f7768e">Rs. {total_exp_day:,.2f}</span></div>""", unsafe_allow_html=True)
+         
     st.divider()
 
     # Section 2: Customer Recovery List
@@ -1371,12 +1560,32 @@ elif menu == "📊 Business Reports":
     recovery_df = db.get_customer_recovery_list()
     
     if not recovery_df.empty:
+        # 1. OVERALL TOTALS (Inverter, Charger, Kit, Other)
+        # Check if columns exist (safe-guard against old DB cache/schema issues if not refreshed)
+        if 'inverter_count' in recovery_df.columns:
+            tot_inv = recovery_df['inverter_count'].sum()
+            tot_chg = recovery_df['charger_count'].sum()
+            tot_kit = recovery_df['kit_count'].sum()
+            tot_oth = recovery_df['other_count'].sum()
+            
+            # Display Summary
+            st.markdown("#### 📊 Sold Items Summary (All Customers)")
+            s1, s2, s3, s4 = st.columns(4)
+            s1.metric("Inverters", int(tot_inv))
+            s2.metric("Chargers", int(tot_chg))
+            s3.metric("Kits", int(tot_kit))
+            s4.metric("Others", int(tot_oth))
+        
         # Display Options
         st.dataframe(
-             recovery_df[['name', 'city', 'phone', 'total_sales', 'total_paid', 'opening_balance', 'net_outstanding']],
+             recovery_df[['name', 'city', 'phone', 'inverter_count', 'charger_count', 'kit_count', 'other_count', 'total_sales', 'total_paid', 'opening_balance', 'net_outstanding']],
              use_container_width=True,
              column_config={
                  "name": "Customer Name",
+                 "inverter_count": st.column_config.NumberColumn("Inverters", format="%d"),
+                 "charger_count": st.column_config.NumberColumn("Chargers", format="%d"),
+                 "kit_count": st.column_config.NumberColumn("Kits", format="%d"),
+                 "other_count": st.column_config.NumberColumn("Others", format="%d"),
                  "total_sales": st.column_config.NumberColumn("Total Sales", format="Rs. %.0f"),
                  "total_paid": st.column_config.NumberColumn("Total Paid", format="Rs. %.0f"),
                  "opening_balance": st.column_config.NumberColumn("Opening Bal", format="Rs. %.0f"),
@@ -1384,6 +1593,11 @@ elif menu == "📊 Business Reports":
              },
              hide_index=True
         )
+        
+        # Overall Total Payment
+        grand_outstanding = recovery_df['net_outstanding'].sum()
+        
+        st.markdown(f"""<div style="text-align:right; font-size:1.5rem; font-weight:bold; margin-top:15px; padding:20px; border:2px solid #7aa2f7; border-radius:10px;">Overall Total Outstanding: <span style="color:#7aa2f7">Rs. {grand_outstanding:,.2f}</span></div>""", unsafe_allow_html=True)
         
         # Export Button
         # Prepare Excel
@@ -1433,43 +1647,83 @@ elif menu == "👥 Partners & Ledger":
         
         # Add Entry Form
         with st.expander("➕ Add Transaction", expanded=False):
-             with st.form("add_trans"):
-                 dc1, dc2, dc3, dc4 = st.columns([1, 2, 1, 1])
-                 t_date = dc1.date_input("Date")
-                 t_desc = dc2.text_input("Description", "Cash Received")
-                 t_type = dc3.radio("Type", ["Credit (Receive Payment)", "Debit (Add Bill)"], horizontal=True)
-                 t_amount = dc4.number_input("Amount", min_value=0.0, step=100.0)
-                 
-                 if st.form_submit_button("Add Entry"):
+             # Helper for auto-calculation
+             def update_calc():
+                 q = st.session_state.get(f"q_{current_party}", 0)
+                 r = st.session_state.get(f"r_{current_party}", 0.0)
+                 st.session_state[f"a_{current_party}"] = q * r
+
+             # 1. Calculator Inputs
+             cal1, cal2 = st.columns(2)
+             cal1.number_input("Quantity (Optional)", min_value=0, step=1, key=f"q_{current_party}", on_change=update_calc)
+             cal2.number_input("Rate / Price per Item", min_value=0.0, step=10.0, key=f"r_{current_party}", on_change=update_calc)
+             
+             st.caption("Enter Quantity & Rate to auto-calculate Amount, or enter Amount manually below.")
+
+             # 2. Transaction Details
+             dc1, dc2, dc3, dc4 = st.columns([1, 2, 2, 1.5])
+             t_date = dc1.date_input("Date")
+             t_desc = dc2.text_input("Description", "Cash Received")
+             t_type = dc3.radio("Type", ["Credit (Receive Payment)", "Debit (Add Bill)"], horizontal=True)
+             
+             # Amount (Auto-updated via key)
+             t_amount = dc4.number_input("Amount", min_value=0.0, step=100.0, key=f"a_{current_party}")
+             
+             if st.button("Add Entry", type="primary"):
+                 if t_amount > 0:
                      debit = t_amount if "Debit" in t_type else 0.0
                      credit = t_amount if "Credit" in t_type else 0.0
+                     
+                     # Append Qty Info to description if used
+                     q_val = st.session_state.get(f"q_{current_party}", 0)
+                     if q_val > 0:
+                         t_desc = f"{t_desc} ({q_val} x {st.session_state.get(f'r_{current_party}', 0)})"
+                     
                      db.add_ledger_entry(current_party, t_desc, debit, credit, t_date)
                      st.success("Entry Added!")
+                     
+                     # Reset Inputs
+                     st.session_state[f"q_{current_party}"] = 0
+                     st.session_state[f"r_{current_party}"] = 0.0
+                     st.session_state[f"a_{current_party}"] = 0.0
+                     
                      st.rerun()
+                 else:
+                     st.error("Amount must be greater than 0")
 
         # Table
         ledger_df = db.get_ledger_entries(current_party)
         
         if not ledger_df.empty:
             ledger_df['Balance'] = (ledger_df['debit'].cumsum() - ledger_df['credit'].cumsum())
-            display_df = ledger_df[['date', 'description', 'debit', 'credit', 'Balance']].copy()
+            
+            # Ensure ID is present for view
+            if 'id' not in ledger_df.columns:
+                 ledger_df['id'] = range(len(ledger_df)) # Fallback
+            
+            display_df = ledger_df[['id', 'date', 'description', 'debit', 'credit', 'Balance']].copy()
             
             st.dataframe(display_df, use_container_width=True, height=400, 
                          column_config={
+                             "id": st.column_config.TextColumn("ID", width="small"),
                              "debit": st.column_config.NumberColumn("Debit (Bill)", format="Rs. %.0f"),
                              "credit": st.column_config.NumberColumn("Credit (Paid)", format="Rs. %.0f"),
                              "Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
                          })
             
+            # Delete Section
+            with st.expander("🗑️ Manage / Delete Entries"):
+                del_id = st.number_input("Enter Transaction ID to Delete", min_value=1, step=1, key=f"del_led_{current_party}")
+                if st.button("Delete Transaction", type="primary"):
+                     db.delete_ledger_entry(del_id)
+                     st.success(f"Deleted Transaction ID {del_id}")
+                     time.sleep(1)
+                     st.rerun()
+            
             final_bal = ledger_df.iloc[-1]['Balance']
             curr_color = "#f7768e" if final_bal > 0 else "#9ece6a" 
             
-            st.markdown(f"""
-            <div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:1px solid {curr_color}; text-align:right;">
-                <div class="sub-text">Total Pending Balance</div>
-                <div style="font-size:2.5rem; font-weight:bold; color:{curr_color}">Rs. {final_bal:,.2f}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:1px solid {curr_color}; text-align:right;"><div class="sub-text">Total Pending Balance</div><div style="font-size:2.5rem; font-weight:bold; color:{curr_color}">Rs. {final_bal:,.2f}</div></div>""", unsafe_allow_html=True)
             
             st.write("")
             if st.button("🖨️ Download Statement (PDF)"):
@@ -1526,19 +1780,7 @@ elif menu == "👥 Partners & Ledger":
                         bal_text = "⚪ Cleared"
                         bal_color = "#a9b1d6" # Grey
                         
-                    st.markdown(f"""
-                    <div class="modern-card">
-                        <div style="display:flex; justify-content:space-between;">
-                            <span class="sub-text">{row['customer_id']}</span>
-                            <span class="sub-text">📍 {row['city']}</span>
-                        </div>
-                        <div class="big-text" style="margin-top:5px;">{row['name']}</div>
-                        <div style="font-size:1.1rem; font-weight:bold; color:{bal_color}; margin-top:10px; margin-bottom:10px;">
-                            {bal_text}
-                        </div>
-                        <div class="sub-text">📞 {row['phone']}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">{row['customer_id']}</span><span class="sub-text">📍 {row['city']}</span></div><div class="big-text" style="margin-top:5px;">{row['name']}</div><div style="font-size:1.1rem; font-weight:bold; color:{bal_color}; margin-top:10px; margin-bottom:10px;">{bal_text}</div><div class="sub-text">📞 {row['phone']}</div></div>""", unsafe_allow_html=True)
                     
                     if st.button(f"📜 View Ledger", key=f"view_leg_{row['customer_id']}", use_container_width=True):
                         st.session_state.ledger_view_party = row['name']
@@ -1571,6 +1813,11 @@ elif menu == "👷 Staff & Payroll":
 
     emp = db.get_all_employees()
     if not emp.empty:
+        # SEARCH STAFF
+        search_emp = st.text_input("🔍 Search Staff", placeholder="Name or Role...")
+        if search_emp:
+             emp = emp[emp.astype(str).apply(lambda x: x.str.contains(search_emp, case=False)).any(axis=1)]
+
         # Optimization: Fetch stats once
         workload_df = db.get_employee_workload()
         perf_df = db.get_employee_performance()
@@ -1592,20 +1839,7 @@ elif menu == "👷 Staff & Payroll":
                 if active_jobs > 5:
                     load_badge = f"<span style='background:#f7768e; color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; margin-left:5px;'>🔥 High Load</span>"
                 
-                st.markdown(f"""
-                <div class="modern-card" style="text-align:center;">
-                    <div style="font-size:3rem; margin-bottom:10px;">👤</div>
-                    <div class="big-text">{row['name']} {load_badge}</div>
-                    <div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div>
-                    <div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div>
-                    <div style="margin-bottom:10px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div>
-                    <hr style="border-color:#2c2f3f;">
-                    <div style="font-size:0.8rem; color:#a9b1d6;">
-                        ID: {row['id']} • Active
-                    </div>
-                </div>
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown(f"""<div class="modern-card" style="text-align:center;"><div style="font-size:3rem; margin-bottom:10px;">👤</div><div class="big-text">{row['name']} {load_badge}</div><div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div><div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div><div style="margin-bottom:10px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div><hr style="border-color:#2c2f3f;"><div style="font-size:0.8rem; color:#a9b1d6;">ID: {row['id']} • Active</div></div>""", unsafe_allow_html=True)
                 
                 # ACTION: Open Dialog
                 btn_col1, btn_col2 = st.columns(2)
