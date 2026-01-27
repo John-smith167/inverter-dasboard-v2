@@ -197,7 +197,7 @@ class DatabaseManager:
         
         # Schema
         columns = ["id", "client_name", "inverter_model", "issue", "status", "phone_number", 
-                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", 
+                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", "parts_data",
                    "assigned_to", "start_date", "due_date", "completion_date", "is_late"]
         
         if df.empty:
@@ -223,6 +223,7 @@ class DatabaseManager:
             "parts_cost": 0.0,
             "total_cost": 0.0,
             "used_parts": "",
+            "parts_data": "[]", # JSON string
             "assigned_to": assigned_to,
             "start_date": start_date,
             "due_date": due_date,
@@ -237,7 +238,7 @@ class DatabaseManager:
         df = self._read_data("Repairs")
         if df.empty:
              return pd.DataFrame(columns=["id", "client_name", "inverter_model", "issue", "status", "phone_number", 
-                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", 
+                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", "parts_data",
                    "assigned_to", "start_date", "due_date", "completion_date", "is_late"])
         
         # Sort by created_at desc
@@ -257,7 +258,7 @@ class DatabaseManager:
              return df
         return df[df['status'] != 'Delivered']
 
-    def close_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list):
+    def close_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json="[]"):
         """
         Closes the job: Updates costs, sets status to Delivered, checks lateness, sets completion date.
         """
@@ -290,6 +291,7 @@ class DatabaseManager:
         df.at[idx, 'parts_cost'] = float(parts_cost)
         df.at[idx, 'total_cost'] = float(total_cost)
         df.at[idx, 'used_parts'] = used_parts_str
+        df.at[idx, 'parts_data'] = parts_data_json
         df.at[idx, 'status'] = 'Delivered'
         df.at[idx, 'is_late'] = is_late
         df.at[idx, 'completion_date'] = str(completion_date)
@@ -316,9 +318,9 @@ class DatabaseManager:
             
             self._write_data("Inventory", inv_df)
 
-    def update_repair_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, new_status="Repaired"):
+    def update_repair_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, new_status="Repaired", parts_data_json="[]"):
         if new_status == "Delivered":
-            return self.close_job(repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list)
+            return self.close_job(repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json)
             
         df = self._read_data("Repairs")
         if df.empty: return
@@ -331,6 +333,7 @@ class DatabaseManager:
         df.at[idx, 'parts_cost'] = float(parts_cost)
         df.at[idx, 'total_cost'] = float(total_cost)
         df.at[idx, 'used_parts'] = used_parts_str
+        df.at[idx, 'parts_data'] = parts_data_json
         df.at[idx, 'status'] = new_status
         
         self._write_data("Repairs", df)
@@ -574,6 +577,34 @@ class DatabaseManager:
         
         return True
 
+    def get_invoice_items(self, invoice_id):
+        """Retrieve all items sold in a specific invoice."""
+        sales_df = self._read_data("Sales")
+        if sales_df.empty:
+            return pd.DataFrame()
+            
+        # Filter by Invoice ID
+        # specific string match
+        if 'invoice_id' in sales_df.columns:
+            items = sales_df[sales_df['invoice_id'].astype(str) == str(invoice_id)]
+            return items
+        return pd.DataFrame()
+
+    def get_invoice_total_from_ledger(self, invoice_id):
+        """Try to fetch the final billed amount from Ledger."""
+        ledger = self._read_data("Ledger")
+        if ledger.empty: return 0.0
+        
+        # Look for description containing "Invoice #{invoice_id}"
+        # This is a heuristic since we don't have a rigid Invoices table
+        # We look for the entry with the highest ID that matches, assuming it is the creation record.
+        matches = ledger[ledger['description'].astype(str).str.contains(f"Invoice #{invoice_id}", regex=False)]
+        
+        if not matches.empty:
+            # Usually the debit amount on the customer is the grand total
+            return matches.iloc[-1]['debit']
+        return 0.0
+
     def get_revenue_analytics(self):
         repairs = self._read_data("Repairs")
         if repairs.empty: return 0.0, 0.0
@@ -741,6 +772,19 @@ class DatabaseManager:
         updated_df = pd.concat([df, new_row], ignore_index=True)
         self._write_data("EmployeeLedger", updated_df)
 
+    def delete_employee_ledger_entry(self, entry_id):
+        """Delete a single transaction from employee ledger by ID."""
+        df = self._read_data("EmployeeLedger")
+        if not df.empty:
+            df = df[df['id'] != entry_id]
+            self._write_data("EmployeeLedger", df)
+
+    def delete_employee_ledger(self, employee_name):
+        """Delete all ledger entries for a specific employee."""
+        df = self._read_data("EmployeeLedger")
+        if not df.empty:
+            df = df[df['employee_name'] != employee_name]
+            self._write_data("EmployeeLedger", df)
     def get_employee_ledger(self, employee_name):
         """
         Get all ledger entries for a specific employee, sorted by date (newest first).
@@ -821,6 +865,12 @@ class DatabaseManager:
         updated_df = pd.concat([df, new_row], ignore_index=True)
         self._write_data("Customers", updated_df)
         return new_cust_id
+
+    def delete_customer(self, customer_id):
+        df = self._read_data("Customers")
+        if not df.empty:
+            df = df[df['customer_id'] != customer_id]
+            self._write_data("Customers", df)
 
     def get_all_customers(self):
         df = self._read_data("Customers")

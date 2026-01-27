@@ -71,22 +71,43 @@ def verify_backend():
     except Exception as e:
         print(f"❌ Recovery List Test Failed: {e}")
 
-    # 4. Test Employee Delete
-    print("\n4. Testing Employee Management...")
+    # 4. Test Employee Delete & Ledger
+    print("\n4. Testing Employee Management & Ledger Delete...")
     try:
+        # Create Employee
         db.add_employee("Temp Emp", "Manager", "123", 0, "CNIC")
         emps = db.get_all_employees()
         assert "Temp Emp" in emps['name'].values, "Employee not added"
         
-        # Get ID
-        t_id = emps[emps['name'] == "Temp Emp"].iloc[0]['id']
-        db.delete_employee(t_id)
+        # Add Ledger Entry
+        db.add_employee_ledger_entry("Temp Emp", today, "Work Log", "Test Work", 1000, 0)
         
-        emps_after = db.get_all_employees()
-        assert "Temp Emp" not in emps_after['name'].values, "Employee not deleted"
-        print("✅ Employee Add/Delete verified.")
+        # Verify Ledger Exists
+        ledger = db.get_employee_ledger("Temp Emp")
+        assert not ledger.empty, "Ledger entry not added"
+        
+        # Delete Ledger specifically
+        db.delete_employee_ledger("Temp Emp")
+        
+        # Verify Ledger Gone
+        ledger_after = db.get_employee_ledger("Temp Emp")
+        assert ledger_after.empty, "Ledger history not deleted"
+        print("✅ Ledger Deletion verified.")
+        
+        # Delete Employee
+        t_id_row = emps[emps['name'] == "Temp Emp"]
+        if not t_id_row.empty:
+            t_id = t_id_row.iloc[0]['id']
+            db.delete_employee(t_id)
+            
+            emps_final = db.get_all_employees()
+            assert "Temp Emp" not in emps_final['name'].values, "Employee not deleted"
+            print("✅ Employee Delete verified.")
+        else:
+            print("⚠️ Could not find temp employee ID to delete.")
+            
     except Exception as e:
-        print(f"❌ Employee Test Failed: {e}")
+        print(f"❌ Employee/Ledger Test Failed: {e}")
 
     # 5. Inventory Valuation
     print("\n5. Testing Inventory Valuation...")

@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 import plotly.express as px
 from datetime import datetime, date, timedelta
 from database import DatabaseManager
@@ -32,8 +33,8 @@ def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, 
     # Header
     pdf.set_font("Arial", 'B', 16)
     if os.path.exists("logo.png"):
-        pdf.image("logo.png", 10, 8, 33)
-        pdf.set_y(25)  # Adjust Y to be below logo
+        pdf.image("logo.png", 88.5, 8, 33)
+        pdf.set_y(35)  # Adjust Y to be below logo
     
     pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     
@@ -94,17 +95,16 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     # --- HEADER SECTION (Figure 2 Style) ---
     # Logo
     if os.path.exists("logo.png"): 
-        pdf.image("logo.png", 10, 8, 33)
+        pdf.image("logo.png", 88.5, 8, 33)
     
-    pdf.set_y(15) # Ensure title is not covered
+    pdf.set_y(35) # Ensure title is not covered
     pdf.set_font("Arial", 'B', 20)
     pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 5, txt="Shah Faisal Gala Mandi Ghotki", ln=True, align='C')
-    pdf.cell(0, 5, txt="Prop: Seetal Das: 0333-7222122", ln=True, align='C')
-    pdf.cell(0, 5, txt="Ananad Kumar: 0336-0080003", ln=True, align='C')
-    pdf.cell(0, 5, txt="Ph: 0723-662227", ln=True, align='C')
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar", ln=True, align='C')
+    pdf.cell(0, 5, txt="Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
@@ -234,8 +234,8 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
     # Header
     pdf.set_font("Arial", 'B', 16)
     if os.path.exists("logo.png"):
-        pdf.image("logo.png", 10, 8, 33)
-        pdf.set_y(25)
+        pdf.image("logo.png", 88.5, 8, 33)
+        pdf.set_y(35)
 
     pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
@@ -299,8 +299,8 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     # Header
     pdf.set_font("Arial", 'B', 16)
     if os.path.exists("logo.png"):
-        pdf.image("logo.png", 10, 8, 33)
-        pdf.set_y(25)
+        pdf.image("logo.png", 88.5, 8, 33)
+        pdf.set_y(35)
 
     pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
     pdf.set_font("Arial", size=10)
@@ -369,8 +369,29 @@ st.set_page_config(page_title="SK INVERTX TRADERS", layout="wide", page_icon="�
 
 # --- INTERACTIVE DIALOGS ---
 @st.dialog("Repair Job Manager")
-def repair_dialog(job_id, client_name, issue, model, current_parts, current_labor, phone_number, total_bill_val=0.0):
+def repair_dialog(job_id, client_name, issue, model, current_parts, current_labor, phone_number, total_bill_val=0.0, parts_data_json="[]"):
     st.caption(f"Job #{job_id} • {model}")
+    
+    # Parse Saved Data
+    saved_parts = []
+    try:
+        saved_parts = json.loads(parts_data_json)
+    except:
+        saved_parts = []
+        
+    # Helpers to extract saved values
+    saved_stock_ids = [p['id'] for p in saved_parts if p.get('type') == 'stock']
+    saved_custom = [p for p in saved_parts if p.get('type') == 'custom']
+    
+    # Initialize session state for quantities if not present (only on first load of this dialog instance?)
+    # Streamlit dialog re-runs from scratch, so we need to rely on st.session_state persistence or default values.
+    # We will use st.session_state injection if keys don't exist.
+    
+    for p in saved_parts:
+        if p.get('type') == 'stock':
+            k_qty = f"qty_{job_id}_{p['id']}"
+            if k_qty not in st.session_state:
+                st.session_state[k_qty] = p['qty']
     
     # 1. Top: Client Info
     with st.container(border=True):
@@ -392,37 +413,79 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     selected_parts_db = []     # For Stock Deduction (Only ID'd items)
     all_billable_parts = []    # For Invoice (Includes Custom)
     
+    # Prepare Data for Saving
+    current_parts_data = []
+    
     if not inventory.empty:
         # Create mapping for multiselect
         inv_map = { r['id']: f"{r['item_name']} - Rs. {r['selling_price']} (Stock: {r['quantity']})" for i, r in inventory.iterrows() }
         
-        sel_keys = st.multiselect("Add Stock Parts", options=list(inv_map.keys()), format_func=lambda x: inv_map[x], key=f"diag_parts_{job_id}")
+        # Pre-select based on saved IDs
+        # We need to intersect with available IDs to avoid errors
+        default_sel = [sid for sid in saved_stock_ids if sid in inv_map]
+        
+        sel_keys = st.multiselect("Add Stock Parts", options=list(inv_map.keys()), default=default_sel, format_func=lambda x: inv_map[x], key=f"diag_parts_{job_id}")
         
         if sel_keys:
             st.caption("Parts Bill:")
             for k in sel_keys:
                 item = inventory[inventory['id'] == k].iloc[0]
-                parts_cost += item['selling_price']
-                st.markdown(f"- {item['item_name']}: **Rs. {item['selling_price']}**")
+                
+                # Quantity Input for each selected part
+                c_p_name, c_p_qty = st.columns([3, 1])
+                c_p_name.markdown(f"- {item['item_name']} (@ Rs. {item['selling_price']})")
+                p_qty = c_p_qty.number_input("Qty", min_value=1, value=1, step=1, key=f"qty_{job_id}_{k}", label_visibility="collapsed")
+                
+                line_total = item['selling_price'] * p_qty
+                parts_cost += line_total
                 
                 # Add to lists
-                selected_parts_db.append({'id': k, 'qty': 1})
-                all_billable_parts.append({'name': item['item_name'], 'price': item['selling_price']})
+                selected_parts_db.append({'id': k, 'qty': p_qty})
+                current_parts_data.append({'id': k, 'qty': p_qty, 'type': 'stock', 'name': item['item_name']})
+                
+                # Show qty in name if > 1
+                disp_name = f"{item['item_name']} (x{p_qty})" if p_qty > 1 else item['item_name']
+                all_billable_parts.append({'name': disp_name, 'price': line_total})
     
     
     # Custom / Out-of-Stock Item (Always Visible)
     st.markdown("---")
     st.markdown("**➕ Add Custom / Market Item**")
-    col_custom1, col_custom2 = st.columns(2)
+    
+    # Restore Custom Item State if available (Single Item Logic)
+    def_c_name = ""
+    def_c_price = 0.0
+    def_c_qty = 1
+    
+    if saved_custom:
+        # Load the first custom item found
+        sc = saved_custom[0]
+        def_c_name = sc.get('name', '')
+        def_c_price = sc.get('unit_price', 0.0)
+        def_c_qty = sc.get('qty', 1)
+        
+    # We use key+job_id to persist in session, but we also want defaults.
+    # NumberInput default is 'value'. TextInput default is 'value'.
+    # If session state exists, it overrides value. 
+    # So if user opens dialog first time, value is used.
+    
+    col_custom1, col_custom2, col_custom3 = st.columns([2, 1, 1])
     with col_custom1:
-        c_name = st.text_input("Item Name", key=f"cust_name_{job_id}", placeholder="e.g., Battery, Capacitor")
+        c_name = st.text_input("Item Name", value=def_c_name, key=f"cust_name_{job_id}", placeholder="e.g., Battery, Capacitor")
     with col_custom2:
-        c_price = st.number_input("Price (Rs.)", min_value=0.0, step=100.0, key=f"cust_price_{job_id}")
+        c_price = st.number_input("Price (Rs.)", min_value=0.0, value=float(def_c_price), step=100.0, key=f"cust_price_{job_id}")
+    with col_custom3:
+        c_qty = st.number_input("Qty", min_value=1, value=int(def_c_qty), step=1, key=f"cust_qty_{job_id}")
     
     if c_name and c_price > 0:
-        parts_cost += c_price
-        all_billable_parts.append({'name': f"{c_name} (Custom)", 'price': c_price})
-        st.success(f"✅ Added: {c_name} - Rs. {c_price:,.2f}")
+        c_total = c_price * c_qty
+        parts_cost += c_total
+        disp_c_name = f"{c_name} (Custom) (x{c_qty})" if c_qty > 1 else f"{c_name} (Custom)"
+        all_billable_parts.append({'name': disp_c_name, 'price': c_total})
+        
+        current_parts_data.append({'id': None, 'qty': c_qty, 'type': 'custom', 'name': c_name, 'unit_price': c_price})
+        
+        st.success(f"✅ Added: {disp_c_name} - Rs. {c_total:,.2f}")
 
 
     # Labor
@@ -434,20 +497,25 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     
     st.divider()
     
+    # serialized data
+    final_parts_json = json.dumps(current_parts_data)
+    final_parts_str = str([p['name'] for p in all_billable_parts]) # For display only
+    
     # 3. Bottom: Actions
     col_save, col_print, col_close = st.columns(3)
     
     with col_save:
         if st.button("💾 Save Progress", use_container_width=True):
-            db.update_repair_job(job_id, labor, parts_cost, total, str([p['name'] for p in all_billable_parts]), [], new_status="In Progress")
+            db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json)
             st.toast("Progress Saved!")
             st.rerun()
 
     with col_print:
         if st.button("🖨️ Print Invoice", use_container_width=True):
-             # Generate Invoice WITHOUT Closing
-             # Note: logic implies if printing here, it's before completion, so likely Draft.
-             # User requested "Separate". We will treat this as a way to get the PDF.
+             # 1. AUTO-SAVE State
+             db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json)
+             
+             # 2. Generate PDF
              pdf_bytes = create_invoice_pdf(client_name, model, all_billable_parts, labor, total, is_final=False) # Draft if not closed
              st.session_state['download_invoice'] = {
                 'data': pdf_bytes,
@@ -458,7 +526,7 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     with col_close:
         if st.button("✅ Complete Job", type="primary", use_container_width=True):
             # Close Job - Deduct Stock ONLY for inventory items
-            db.close_job(job_id, labor, parts_cost, total, str([p['name'] for p in all_billable_parts]), selected_parts_db)
+            db.close_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, parts_data_json=final_parts_json)
             st.success("Job Completed & Moved to History!")
             st.rerun()
 
@@ -576,39 +644,59 @@ def employee_dialog(emp_id, emp_name, emp_role, emp_phone, emp_cnic):
         st.info("No completed jobs yet.")
 
     st.divider()
-    if st.button("🗑️ Delete Employee", key=f"del_emp_{emp_id}"):
+    st.divider()
+    
+    # Delete Button Logic with Session State
+    del_key = f"confirm_del_emp_{emp_id}"
+    del_ledger_key = f"del_ledger_check_{emp_id}"
+    
+    if st.button("🗑️ Delete Employee", key=f"del_emp_btn_{emp_id}"):
+        st.session_state[del_key] = True
+        # Reset checkbox state on new open
+        if del_ledger_key in st.session_state: del st.session_state[del_ledger_key]
+        
+    if st.session_state.get(del_key, False):
+        # 1. Check Balance
+        bal = db.calculate_employee_balance(emp_name)
+        
         st.error("Are you sure you want to delete this employee?")
-        c1, c2 = st.columns(2)
-        if c1.button("Yes, Delete", key=f"conf_del_{emp_id}", type="primary"):
+        
+        if bal != 0:
+            st.warning(f"⚠️ **Warning:** This employee has a remaining balance of Rs. {bal:,.2f}!")
+        
+        # 2. Checkbox for Ledger
+        delete_ledger = st.checkbox("Also delete entire Ledger History for this employee?", key=del_ledger_key)
+        
+        col_conf1, col_conf2 = st.columns(2)
+        
+        if col_conf1.button("Yes, Delete", key=f"yes_del_emp_{emp_id}", type="primary"):
+            # Execute deletion
+            if delete_ledger:
+                db.delete_employee_ledger(emp_name)
+                st.toast(f"Ledger history for {emp_name} deleted.")
+                
             db.delete_employee(emp_id)
             st.success("Employee Deleted!")
+            # Clear state
+            st.session_state[del_key] = False
             st.rerun()
-        if c2.button("Cancel", key=f"canc_del_{emp_id}"):
-             st.rerun()
+            
+        if col_conf2.button("Cancel", key=f"no_del_emp_{emp_id}"):
+            st.session_state[del_key] = False
+            st.rerun()
 
 @st.dialog("Employee Payroll Manager")
 def employee_payroll_dialog(emp_id, emp_name):
     st.caption(f"💰 Payroll & Ledger for {emp_name}")
     
-    # Create 3 Tabs
-    tab1, tab2, tab3 = st.tabs(["🛠️ Log Daily Work", "💸 Record Payment", "📜 Ledger History"])
+    # Create 2 Tabs (Ledger History removed - now has dedicated full page)
+    tab1, tab2 = st.tabs(["🛠️ Log Daily Work", "💸 Record Payment"])
     
     # TAB 1: Log Daily Work
     with tab1:
         st.markdown("### Log Work Completed")
         
-        # Calculator Helper
-        with st.expander("🧮 Calculator"):
-            calc1, calc2 = st.columns(2)
-            v1 = calc1.number_input("Val 1", 0.0, step=10.0, key="c_v1")
-            v2 = calc2.number_input("Val 2", 0.0, step=10.0, key="c_v2")
-            op = st.radio("Op", ["+", "-", "*", "/"], horizontal=True, label_visibility="collapsed")
-            res = 0
-            if op == "+": res = v1 + v2
-            elif op == "-": res = v1 - v2
-            elif op == "*": res = v1 * v2
-            elif op == "/" and v2 != 0: res = v1 / v2
-            st.markdown(f"**Result:** {res}")
+
 
         with st.form("log_work_form"):
             w_date = st.date_input("Date", value=datetime.now().date())
@@ -654,78 +742,7 @@ def employee_payroll_dialog(emp_id, emp_name):
                 else:
                     st.error("Amount must be greater than 0")
     
-    # TAB 3: Ledger History
-    with tab3:
-        st.markdown("### Transaction History")
-        
-        # Fetch Data
-        ledger_df = db.get_employee_ledger(emp_name)
-        balance = db.calculate_employee_balance(emp_name)
-        
-        if not ledger_df.empty:
-            # Display Table
-            ledger_df['Running Balance'] = (ledger_df['earned'].cumsum() - ledger_df['paid'].cumsum()) # Note: This might depend on sort order.
-            # Ledger is returned sorted by Date DESC (newest first). 
-            # Cumsum on newest first is confusing for running balance.
-            # We should sort ASC for calculation, then optionally sort back or just show ASC.
-            ledger_df_asc = ledger_df.sort_values(by=['date', 'id'], ascending=True)
-            ledger_df_asc['Running Balance'] = (ledger_df_asc['earned'] - ledger_df_asc['paid']).cumsum()
-            
-            # We show Descending usually?
-            display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=False)[['date', 'type', 'description', 'earned', 'paid', 'Running Balance']]
-            
-            
-            @st.dialog("Full Ledger History", width="large")
-            def show_full_history(df):
-                st.dataframe(df, use_container_width=True, height=600)
 
-            if st.button("🔍 View Full Screen"):
-                show_full_history(display_df)
-
-            st.dataframe(
-                display_df, 
-                use_container_width=True, 
-                height=350,
-                column_config={
-                    "date": "Date",
-                    "type": "Type",
-                    "description": "Description",
-                    "earned": st.column_config.NumberColumn("Earned", format="Rs. %.0f"),
-                    "paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
-                    "Running Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
-                }
-            )
-            
-            # Balance Display
-            if balance > 0:
-                balance_color = "#9ece6a"  # Green
-                balance_icon = "🟢"
-                balance_label = "Payable Salary"
-            elif balance < 0:
-                balance_color = "#f7768e"  # Red
-                balance_icon = "🔴"
-                balance_label = "Outstanding Advance"
-            else:
-                balance_color = "#7aa2f7"  # Blue
-                balance_icon = "⚪"
-                balance_label = "Settled"
-            
-            st.markdown(f"""
-<div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:2px solid {balance_color}; text-align:center; margin-top:20px;"><div style="font-size:0.9rem; color:#a9b1d6; margin-bottom:5px;">{balance_icon} {balance_label}</div><div style="font-size:2.5rem; font-weight:bold; color:{balance_color}">Rs. {abs(balance):,.2f}</div></div>""", unsafe_allow_html=True)
-            
-            # PDF Download
-            st.write("")
-            if st.button("🖨️ Download Statement (PDF)", use_container_width=True):
-                pdf_data = create_employee_payroll_pdf(emp_name, ledger_df, balance)
-                st.download_button(
-                    "📥 Click to Download PDF", 
-                    data=pdf_data, 
-                    file_name=f"Payroll_{emp_name}.pdf", 
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-        else:
-            st.info("No transactions recorded yet. Start by logging work or recording payments.")
 
 
 # --- GLOBAL CSS (V4 MODERN THEME) ---
@@ -838,7 +855,7 @@ with st.sidebar:
         st.image("https://cdn-icons-png.flaticon.com/512/3665/3665922.png", width=50) # Fallback
         
     st.markdown("### SK INVERTX TRADERS")
-    st.caption("Traders")
+    st.caption("v4.6 FIXED")
     st.markdown("---")
     
     # Navigation Pills
@@ -913,119 +930,181 @@ def update_sales_grid():
 if menu == "⚡ Quick Invoice":
     st.title("⚡ Quick Sales Invoice")
     
-    # Session State for Grid
-    if 'sales_grid_data' not in st.session_state:
-        # Initialize with 3 empty rows for convenience
-        st.session_state.sales_grid_data = pd.DataFrame(
-            [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
-        )
+    # Create Tabs
+    tab_new, tab_hist = st.tabs(["➕ New Invoice", "📜 Invoice History"])
 
-    # 1. HEADER SECTION
-    with st.container(border=True):
-        c1, c2, c3 = st.columns([2, 1, 1])
-        
-        # Get Customer List
-        customers_df = db.get_all_customers()
-        cust_names = customers_df['name'].tolist() if not customers_df.empty else []
-        
-        with c1:
-            customer_name = st.selectbox("Select Customer", ["Counter Sale"] + cust_names, index=0)
+    # --- TAB 1: NEW INVOICE ---
+    with tab_new:
+        # Session State for Grid
+        if 'sales_grid_data' not in st.session_state:
+            # Initialize with 3 empty rows for convenience
+            st.session_state.sales_grid_data = pd.DataFrame(
+                [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
+            )
+
+        # 1. HEADER SECTION
+        with st.container(border=True):
+            c1, c2, c3 = st.columns([2, 1, 1])
             
-        with c2:
-            inv_date = st.date_input("Invoicing Date", value=datetime.now().date())
+            # Get Customer List
+            customers_df = db.get_all_customers()
+            cust_names = customers_df['name'].tolist() if not customers_df.empty else []
             
-        with c3:
-            # Auto-generated Invoice #
-            next_inv = db.get_next_invoice_number()
-            st.text_input("Invoice #", value=next_inv, disabled=True)
-
-    # 2. GRID ENTRY SYSTEM
-    st.subheader("🛒 Items Cart")
-    
-    # Editable Dataframe
-    # We use column_config to enforce types
-    edited_df = st.data_editor(
-        st.session_state.sales_grid_data,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
-            "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
-            "Rate": st.column_config.NumberColumn("Rate (Rs.)", min_value=0.0, step=10.0, required=True),
-            "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
-            "Total": st.column_config.NumberColumn("Total", disabled=True) # Calculated column
-        },
-        key="sales_editor",
-        on_change=update_sales_grid
-    )
-    
-    # 3. REAL-TIME CALCULATIONS are now handled in update_sales_grid() callback
-    # This prevents the race condition where data resets on first edit.
-    
-    # Use the session state data directly for sums, as edited_df is outdated until next rerun if we rely on callback path?
-    # NO: edited_df returned by data_editor does NOT contain the changes made in the callback if the callback runs BEFORE this line?
-    # Actually, data_editor returns the 'new' state that triggered the callback.
-    # So edited_df IS valid. But we updated session_state.sales_grid_data in logic.
-    # Let's trust session_state.sales_grid_data for final source of truth.
-    
-    df_display = st.session_state.sales_grid_data.copy()
-    
-
-    # Sums
-    subtotal = df_display['Total'].sum()
-
-    # Footer Inputs
-    st.divider()
-    fc1, fc2, fc3 = st.columns([2, 1, 1])
-    
-    with fc2:
-        st.markdown(f"**Subtotal:** Rs. {subtotal:,.2f}")
-        freight = st.number_input("Freight / Kiraya", min_value=0.0, step=50.0)
-        misc = st.number_input("Labor / Misc", min_value=0.0, step=50.0)
-        
-    with fc3:
-        grand_total = subtotal + freight + misc
-        st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
-        
-        st.write("")
-        if st.button("✅ Save & Print", type="primary", use_container_width=True):
-            if customer_name and grand_total >= 0:
-                # Filter out empty rows
-                valid_items = df_display[df_display['Item Name'].str.strip() != ""]
+            with c1:
+                customer_name = st.selectbox("Select Customer", ["Counter Sale"] + cust_names, index=0)
                 
-                if valid_items.empty:
-                    st.error("Please add at least one item.")
-                else:
-                    # Save to DB
-                    success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
+            with c2:
+                inv_date = st.date_input("Invoicing Date", value=datetime.now().date())
+                
+            with c3:
+                # Auto-generated Invoice #
+                next_inv = db.get_next_invoice_number()
+                st.text_input("Invoice #", value=next_inv, disabled=True)
+
+        # 2. GRID ENTRY SYSTEM
+        st.subheader("🛒 Items Cart")
+        
+        # Editable Dataframe
+        # We use column_config to enforce types
+        edited_df = st.data_editor(
+            st.session_state.sales_grid_data,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
+                "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
+                "Rate": st.column_config.NumberColumn("Rate (Rs.)", min_value=0.0, step=10.0, required=True),
+                "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
+                "Total": st.column_config.NumberColumn("Total", disabled=True) # Calculated column
+            },
+            key="sales_editor",
+            on_change=update_sales_grid
+        )
+        
+        # 3. REAL-TIME CALCULATIONS
+        df_display = st.session_state.sales_grid_data.copy()
+        
+        # Sums
+        subtotal = df_display['Total'].sum()
+
+        # Footer Inputs
+        st.divider()
+        fc1, fc2, fc3 = st.columns([2, 1, 1])
+        
+        with fc2:
+            st.markdown(f"**Subtotal:** Rs. {subtotal:,.2f}")
+            freight = st.number_input("Freight / Kiraya", min_value=0.0, step=50.0)
+            misc = st.number_input("Labor / Misc", min_value=0.0, step=50.0)
+            
+        with fc3:
+            grand_total = subtotal + freight + misc
+            st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
+            
+            st.write("")
+            if st.button("✅ Save & Print", type="primary", use_container_width=True):
+                if customer_name and grand_total >= 0:
+                    # Filter out empty rows
+                    valid_items = df_display[df_display['Item Name'].str.strip() != ""]
                     
-                    if success:
-                        st.success(f"Invoice {next_inv} Saved Successfully!")
+                    if valid_items.empty:
+                        st.error("Please add at least one item.")
+                    else:
+                        # Save to DB
+                        success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
                         
-                        # Generate PDF
-                        pdf_bytes = create_sales_invoice_pdf(
-                            next_inv, customer_name, datetime.now().strftime('%Y-%m-%d'), 
-                            valid_items, subtotal, freight, misc, grand_total
-                        )
-                        
-                        # Show Download
-                        st.download_button(
-                            "📥 Download Invoice PDF", 
-                            data=pdf_bytes, 
-                            file_name=f"Invoice_{next_inv}.pdf", 
-                            mime="application/pdf", 
-                            type="primary",
-                            use_container_width=True
-                        )
-                        
-                        # Clear Grid (Optional, or keep for review? User usually wants clear)
-                        # Let's clear after a manual delay or just let them navigate away
-                        # Resetting session state
-                        del st.session_state.sales_grid_data
-                        time.sleep(2)
-                        st.rerun()
-            else:
-                st.error("Invalid Customer or Total.")
+                        if success:
+                            st.success(f"Invoice {next_inv} Saved Successfully!")
+                            
+                            # Generate PDF
+                            pdf_bytes = create_sales_invoice_pdf(
+                                next_inv, customer_name, datetime.now().strftime('%Y-%m-%d'), 
+                                valid_items, subtotal, freight, misc, grand_total
+                            )
+                            
+                            # Show Download
+                            st.download_button(
+                                "📥 Download Invoice PDF", 
+                                data=pdf_bytes, 
+                                file_name=f"Invoice_{next_inv}.pdf", 
+                                mime="application/pdf", 
+                                type="primary",
+                                use_container_width=True
+                            )
+                            
+                            # Clear Grid
+                            del st.session_state.sales_grid_data
+                            time.sleep(2)
+                            st.rerun()
+                else:
+                    st.error("Invalid Customer or Total.")
+
+    # --- TAB 2: INVOICE HISTORY ---
+    with tab_hist:
+        st.subheader("📜 Search Invoice History")
+        
+        col_s1, col_s2 = st.columns([3, 1])
+        with col_s1:
+             search_inv_input = st.text_input("Enter Invoice #", placeholder="e.g. INV-2026-001")
+             
+        if search_inv_input:
+             # Fetch Items
+             items_df = db.get_invoice_items(search_inv_input)
+             
+             if not items_df.empty:
+                 st.success(f"✅ Found {len(items_df)} items for {search_inv_input}")
+                 
+                 # Extract Meta Data from first row
+                 first_row = items_df.iloc[0]
+                 cust_name_h = first_row['customer_name']
+                 date_h = first_row['sale_date']
+                 
+                 # Display Meta
+                 st.markdown(f"**Customer:** {cust_name_h} | **Date:** {date_h}")
+                 
+                 # Prepare Display DF
+                 # Columns in Sales: id, invoice_id, customer_name, item_name, quantity_sold, sale_price, return_quantity, total_amount, sale_date
+                 disp_ph = items_df[['item_name', 'quantity_sold', 'sale_price', 'return_quantity', 'total_amount']].copy()
+                 disp_ph.columns = ['Item Name', 'Qty', 'Rate', 'Return Qty', 'Total']
+                 
+                 st.dataframe(disp_ph, use_container_width=True)
+                 
+                 # Calculations
+                 subtotal_h = disp_ph['Total'].sum()
+                 
+                 # Try to get Grand Total from Ledger to infer Freight/Misc
+                 ledger_total = db.get_invoice_total_from_ledger(search_inv_input)
+                 
+                 # Inferred Extras
+                 diff = 0.0
+                 if ledger_total > subtotal_h:
+                     diff = ledger_total - subtotal_h
+                     
+                 # Display Totals
+                 st.divider()
+                 h_c1, h_c2 = st.columns([3, 1])
+                 with h_c2:
+                     st.markdown(f"**Subtotal:** Rs. {subtotal_h:,.2f}")
+                     if diff > 0:
+                         st.markdown(f"**Freight/Misc:** Rs. {diff:,.2f}")
+                     st.markdown(f"### Total: Rs. {ledger_total:,.0f}")
+                     
+                     # Re-Print Button
+                     if st.button("🖨️ Re-Print Invoice", key=f"reprint_{search_inv_input}", use_container_width=True):
+                         # Generate PDF
+                         # We treat 'diff' as 'misc' for simplicity since we can't distinguish freight vs labor
+                         pdf_bytes_h = create_sales_invoice_pdf(
+                                search_inv_input, cust_name_h, str(date_h).split(' ')[0], 
+                                disp_ph, subtotal_h, 0.0, diff, ledger_total
+                            )
+                         st.download_button(
+                                "📥 Download PDF", 
+                                data=pdf_bytes_h, 
+                                file_name=f"Invoice_{search_inv_input}.pdf", 
+                                mime="application/pdf", 
+                                use_container_width=True
+                            )
+             else:
+                 st.info("No invoice found with that number. Please check the ID (e.g., INV-2026-001).")
 # --- TAB: ACCOUNTS LEDGER ---
 
 
@@ -1170,8 +1249,8 @@ elif menu == "🔧 Repair Center":
         if 'download_invoice' in st.session_state:
             dl = st.session_state['download_invoice']
             st.success("Invoice Ready!")
-            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf")
-            if st.button("Clear Notification"): 
+            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf", key="dl_btn_active")
+            if st.button("Clear Notification", key="clear_notif_active"): 
                 del st.session_state['download_invoice']
                 st.rerun()
 
@@ -1225,7 +1304,8 @@ elif menu == "🔧 Repair Center":
                     
                     # ACTION: Open Dialog
                     if st.button(f"Manage {row['client_name']}", key=f"btn_{row['id']}", use_container_width=True):
-                        repair_dialog(row['id'], row['client_name'], row['issue'], row['inverter_model'], row['used_parts'], row['service_cost'], row['phone_number'], row['total_cost'])
+                        p_data = row['parts_data'] if 'parts_data' in row and pd.notna(row['parts_data']) else "[]"
+                        repair_dialog(row['id'], row['client_name'], row['issue'], row['inverter_model'], row['used_parts'], row['service_cost'], row['phone_number'], row['total_cost'], p_data)
 
         else:
             st.info("No active jobs. Good job team! 🌴")
@@ -1238,8 +1318,8 @@ elif menu == "🔧 Repair Center":
         if 'download_invoice' in st.session_state:
             dl = st.session_state['download_invoice']
             st.success("Invoice Ready!")
-            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf")
-            if st.button("Clear Notification"): 
+            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf", key="dl_btn_history")
+            if st.button("Clear Notification", key="clear_notif_history"): 
                 del st.session_state['download_invoice']
                 st.rerun()
 
@@ -1782,9 +1862,28 @@ elif menu == "👥 Partners & Ledger":
                         
                     st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">{row['customer_id']}</span><span class="sub-text">📍 {row['city']}</span></div><div class="big-text" style="margin-top:5px;">{row['name']}</div><div style="font-size:1.1rem; font-weight:bold; color:{bal_color}; margin-top:10px; margin-bottom:10px;">{bal_text}</div><div class="sub-text">📞 {row['phone']}</div></div>""", unsafe_allow_html=True)
                     
-                    if st.button(f"📜 View Ledger", key=f"view_leg_{row['customer_id']}", use_container_width=True):
+                    b1, b2 = st.columns(2)
+                    if b1.button(f"📜 View Ledger", key=f"view_leg_{row['customer_id']}", use_container_width=True):
                         st.session_state.ledger_view_party = row['name']
                         st.rerun()
+
+                    if b2.button(f"🗑️ Delete", key=f"del_client_{row['customer_id']}", use_container_width=True):
+                         st.session_state[f"confirm_del_{row['customer_id']}"] = True
+                         st.rerun()
+                    
+                    if st.session_state.get(f"confirm_del_{row['customer_id']}", False):
+                        st.warning("Are you sure? This will delete the client profile.")
+                        col_conf1, col_conf2 = st.columns(2)
+                        if col_conf1.button("✅ Yes, Delete", key=f"yes_del_{row['customer_id']}", type="primary"):
+                             db.delete_customer(row['customer_id'])
+                             st.success(f"Client {row['name']} deleted!")
+                             st.session_state[f"confirm_del_{row['customer_id']}"] = False
+                             time.sleep(1)
+                             st.rerun()
+                        
+                        if col_conf2.button("❌ Cancel", key=f"no_del_{row['customer_id']}"):
+                             st.session_state[f"confirm_del_{row['customer_id']}"] = False
+                             st.rerun()
         else:
             st.info("No clients found. Add your first client!")
 
@@ -1792,65 +1891,186 @@ elif menu == "👥 Partners & Ledger":
 elif menu == "👷 Staff & Payroll":
     st.title("👷 Staff & Payroll")
     
-    # Add Employee (Collapsible)
-    with st.expander("➕ Register New Employee"):
-        with st.form("new_emp"):
-            c1, c2 = st.columns(2)
-            name = c1.text_input("Full Name")
-            role = c2.selectbox("Role", ["Technician", "Manager"])
+    # State management for ledger view
+    if 'ledger_view_employee' not in st.session_state:
+        st.session_state.ledger_view_employee = None
+
+    # Logic to handle "Back to Employee List"
+    if st.session_state.ledger_view_employee:
+        # SHOW FULL-PAGE EMPLOYEE LEDGER VIEW
+        current_employee = st.session_state.ledger_view_employee
+        
+        col_back, col_title = st.columns([1, 5])
+        if col_back.button("⬅ Back to Employee List"):
+            st.session_state.ledger_view_employee = None
+            st.rerun()
+        
+        col_title.subheader(f"History: {current_employee}")
+        
+        # Add Transaction Form
+        with st.expander("➕ Add Transaction", expanded=False):
+            dc1, dc2, dc3, dc4 = st.columns([1, 2, 2, 1.5])
+            t_date = dc1.date_input("Date", key=f"emp_led_date_{current_employee}")
+            t_desc = dc2.text_input("Description", "Work Log", key=f"emp_led_desc_{current_employee}")
+            t_type = dc3.radio("Type", ["Earned (Work/Fixed)", "Paid (Payment)"], horizontal=True, key=f"emp_led_type_{current_employee}")
+            t_amount = dc4.number_input("Amount", min_value=0.0, step=100.0, key=f"emp_led_amt_{current_employee}")
             
-            c3, c4 = st.columns(2)
-            phone = c3.text_input("Phone Number")
-            cnic = c4.text_input("CNIC / Passport Number")
-            
-            if st.form_submit_button("Save Employee"):
-                if name:
-                    db.add_employee(name, role, phone, 0, cnic)
-                    st.success("Employee Added!")
+            if st.button("Add Entry", type="primary", key=f"emp_led_add_{current_employee}"):
+                if t_amount > 0:
+                    earned = t_amount if "Earned" in t_type else 0.0
+                    paid = t_amount if "Paid" in t_type else 0.0
+                    entry_type = "Work Log" if "Earned" in t_type else "Salary Payment"
+                    
+                    db.add_employee_ledger_entry(current_employee, t_date, entry_type, t_desc, earned, paid)
+                    st.success("Entry Added!")
                     st.rerun()
                 else:
-                    st.error("Name is required.")
+                    st.error("Amount must be greater than 0")
 
-    emp = db.get_all_employees()
-    if not emp.empty:
-        # SEARCH STAFF
-        search_emp = st.text_input("🔍 Search Staff", placeholder="Name or Role...")
-        if search_emp:
-             emp = emp[emp.astype(str).apply(lambda x: x.str.contains(search_emp, case=False)).any(axis=1)]
-
-        # Optimization: Fetch stats once
-        workload_df = db.get_employee_workload()
-        perf_df = db.get_employee_performance()
+        # Table
+        ledger_df = db.get_employee_ledger(current_employee)
         
-        e_cols = st.columns(3)
-        for idx, row in emp.iterrows():
-            with e_cols[idx % 3]:
-                # Workload Logic
-                active_jobs = 0
-                if not workload_df.empty and row['name'] in workload_df['assigned_to'].values:
-                    active_jobs = workload_df[workload_df['assigned_to'] == row['name']].iloc[0]['active_jobs']
+        if not ledger_df.empty:
+            # Calculate Running Balance
+            ledger_df_asc = ledger_df.sort_values(by=['date', 'id'], ascending=True)
+            ledger_df_asc['Balance'] = (ledger_df_asc['earned'] - ledger_df_asc['paid']).cumsum()
+            
+            # Display in descending order
+            display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=False)[['id', 'date', 'type', 'description', 'earned', 'paid', 'Balance']].copy()
+            
+            st.dataframe(display_df, use_container_width=True, height=400, 
+                         column_config={
+                             "id": st.column_config.TextColumn("ID", width="small"),
+                             "date": "Date",
+                             "type": "Type",
+                             "description": "Description",
+                             "earned": st.column_config.NumberColumn("Earned", format="Rs. %.0f"),
+                             "paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
+                             "Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
+                         })
+            
+            # Delete Section
+            with st.expander("🗑️ Manage / Delete Entries"):
+                del_id = st.number_input("Enter Transaction ID to Delete", min_value=1, step=1, key=f"del_emp_led_{current_employee}")
+                if st.button("Delete Transaction", type="primary", key=f"del_emp_led_btn_{current_employee}"):
+                     db.delete_employee_ledger_entry(del_id)
+                     st.success(f"Deleted Transaction ID {del_id}")
+                     time.sleep(1)
+                     st.rerun()
+            
+            # Balance Display
+            final_bal = ledger_df_asc.iloc[-1]['Balance']
+            
+            if final_bal > 0:
+                balance_color = "#9ece6a"  # Green
+                balance_icon = "🟢"
+                balance_label = "Payable Salary"
+            elif final_bal < 0:
+                balance_color = "#f7768e"  # Red
+                balance_icon = "🔴"
+                balance_label = "Outstanding Advance"
+            else:
+                balance_color = "#7aa2f7"  # Blue
+                balance_icon = "⚪"
+                balance_label = "Settled"
+            
+            st.markdown(f"""<div style="padding:20px; border-radius:10px; background-color:#1a1c24; border:2px solid {balance_color}; text-align:center; margin-top:20px;"><div style="font-size:0.9rem; color:#a9b1d6; margin-bottom:5px;">{balance_icon} {balance_label}</div><div style="font-size:2.5rem; font-weight:bold; color:{balance_color}">Rs. {abs(final_bal):,.2f}</div></div>""", unsafe_allow_html=True)
+            
+            # PDF Download
+            st.write("")
+            if st.button("🖨️ Download Statement (PDF)", use_container_width=True, key=f"emp_led_pdf_{current_employee}"):
+                pdf_data = create_employee_payroll_pdf(current_employee, ledger_df, final_bal)
+                st.download_button(
+                    "📥 Click to Download PDF", 
+                    data=pdf_data, 
+                    file_name=f"Payroll_{current_employee}.pdf", 
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+
+        else:
+            st.info("No transactions recorded yet. Start by adding entries above.")
+    
+    else:
+        # SHOW EMPLOYEE LIST VIEW
+        # Add Employee (Collapsible)
+        with st.expander("➕ Register New Employee"):
+            with st.form("new_emp"):
+                c1, c2 = st.columns(2)
+                name = c1.text_input("Full Name")
+                role = c2.selectbox("Role", ["Technician", "Manager"])
                 
-                # Completed Logic
-                completed_jobs = 0
-                if not perf_df.empty and row['name'] in perf_df['assigned_to'].values:
-                    completed_jobs = perf_df[perf_df['assigned_to'] == row['name']].iloc[0]['total_completed']
+                c3, c4 = st.columns(2)
+                phone = c3.text_input("Phone Number")
+                cnic = c4.text_input("CNIC / Passport Number")
                 
-                load_badge = ""
-                if active_jobs > 5:
-                    load_badge = f"<span style='background:#f7768e; color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; margin-left:5px;'>🔥 High Load</span>"
-                
-                st.markdown(f"""<div class="modern-card" style="text-align:center;"><div style="font-size:3rem; margin-bottom:10px;">👤</div><div class="big-text">{row['name']} {load_badge}</div><div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div><div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div><div style="margin-bottom:10px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div><hr style="border-color:#2c2f3f;"><div style="font-size:0.8rem; color:#a9b1d6;">ID: {row['id']} • Active</div></div>""", unsafe_allow_html=True)
-                
-                # ACTION: Open Dialog
-                btn_col1, btn_col2 = st.columns(2)
-                with btn_col1:
-                    if st.button(f"View Data", key=f"emp_btn_{row['id']}", use_container_width=True):
-                        # Robust field access with fallback
-                        p = row['phone'] if 'phone' in row else ''
-                        c = row['cnic'] if 'cnic' in row else ''
-                        employee_dialog(row['id'], row['name'], row['role'], p, c)
-                
-                with btn_col2:
-                    if st.button(f"💰 Wallet", key=f"emp_wallet_{row['id']}", use_container_width=True):
-                        employee_payroll_dialog(row['id'], row['name'])
+                if st.form_submit_button("Save Employee"):
+                    if name:
+                        db.add_employee(name, role, phone, 0, cnic)
+                        st.success("Employee Added!")
+                        st.rerun()
+                    else:
+                        st.error("Name is required.")
+
+        emp = db.get_all_employees()
+        if not emp.empty:
+            # SEARCH STAFF
+            search_emp = st.text_input("🔍 Search Staff", placeholder="Name or Role...")
+            if search_emp:
+                 emp = emp[emp.astype(str).apply(lambda x: x.str.contains(search_emp, case=False)).any(axis=1)]
+
+            # Optimization: Fetch stats once
+            workload_df = db.get_employee_workload()
+            perf_df = db.get_employee_performance()
+            
+            e_cols = st.columns(3)
+            for idx, row in emp.iterrows():
+                with e_cols[idx % 3]:
+                    # Workload Logic
+                    active_jobs = 0
+                    if not workload_df.empty and row['name'] in workload_df['assigned_to'].values:
+                        active_jobs = workload_df[workload_df['assigned_to'] == row['name']].iloc[0]['active_jobs']
+                    
+                    # Completed Logic
+                    completed_jobs = 0
+                    if not perf_df.empty and row['name'] in perf_df['assigned_to'].values:
+                        completed_jobs = perf_df[perf_df['assigned_to'] == row['name']].iloc[0]['total_completed']
+                    
+                    load_badge = ""
+                    if active_jobs > 5:
+                        load_badge = f"<span style='background:#f7768e; color:white; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold; margin-left:5px;'>🔥 High Load</span>"
+                    
+                    st.markdown(f"""<div class="modern-card" style="text-align:center;"><div style="font-size:3rem; margin-bottom:10px;">👤</div><div class="big-text">{row['name']} {load_badge}</div><div class="sub-text" style="color:#7aa2f7; text-transform:uppercase; letter-spacing:1px;">{row['role']}</div><div style="margin-top:10px; font-weight:bold;">⚡ Active Jobs: {active_jobs}</div><div style="margin-bottom:10px; font-weight:bold; color:#9ece6a;">✅ Completed: {completed_jobs}</div><hr style="border-color:#2c2f3f;"><div style="font-size:0.8rem; color:#a9b1d6;">ID: {row['id']} • Active</div></div>""", unsafe_allow_html=True)
+                    
+                    # ACTION BUTTONS
+                    btn_col1, btn_col2, btn_col3 = st.columns(3)
+                    with btn_col1:
+                        if st.button(f"View Data", key=f"emp_btn_{row['id']}", use_container_width=True):
+                            # Robust field access with fallback
+                            p = row['phone'] if 'phone' in row else ''
+                            c = row['cnic'] if 'cnic' in row else ''
+                            employee_dialog(row['id'], row['name'], row['role'], p, c)
+                    
+                    with btn_col2:
+                        if st.button(f"💰 Wallet", key=f"emp_wallet_{row['id']}", use_container_width=True):
+                            st.session_state['active_payroll_emp'] = {'id': row['id'], 'name': row['name']}
+                            st.rerun()
+                    
+                    with btn_col3:
+                        if st.button(f"📜 Ledger", key=f"emp_ledger_{row['id']}", use_container_width=True):
+                            st.session_state.ledger_view_employee = row['name']
+                            # Clear payroll dialog state to prevent it from auto-opening
+                            if 'active_payroll_emp' in st.session_state:
+                                del st.session_state['active_payroll_emp']
+                            st.rerun()
+
+            # Handle Active Payroll Dialog (Outside the loop)
+            if 'active_payroll_emp' in st.session_state and st.session_state['active_payroll_emp']:
+                 emp_data = st.session_state['active_payroll_emp']
+                 try:
+                     employee_payroll_dialog(emp_data['id'], emp_data['name'])
+                 except Exception:
+                     # If dialog closes or error, clear state
+                     del st.session_state['active_payroll_emp']
+                     st.rerun()
 
