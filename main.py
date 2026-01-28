@@ -361,7 +361,49 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_font("Arial", 'I', 8)
     pdf.cell(0, 10, "Thank you for your business!", 0, 1, 'C')
 
+
     return pdf.output(dest='S').encode('latin-1')
+
+def render_stock_valuation_table(db_instance):
+    st.header("📦 Detailed Stock Valuation")
+    stock_inv = db_instance.get_inventory()
+    if not stock_inv.empty:
+        # Prepare Data
+        stock_inv['Total Cost'] = stock_inv['quantity'] * stock_inv['cost_price']
+        stock_inv['Total Selling'] = stock_inv['quantity'] * stock_inv['selling_price']
+        
+        # Display
+        st.dataframe(
+            stock_inv[['id', 'item_name', 'category', 'quantity', 'cost_price', 'selling_price', 'Total Cost', 'Total Selling']],
+            use_container_width=True,
+            column_config={
+                "cost_price": st.column_config.NumberColumn("Cost Price", format="Rs. %.2f"),
+                "selling_price": st.column_config.NumberColumn("Selling Price", format="Rs. %.2f"),
+                "Total Cost": st.column_config.NumberColumn("Total Cost Value", format="Rs. %.2f"),
+                "Total Selling": st.column_config.NumberColumn("Total Sales Value", format="Rs. %.2f"),
+            }
+        )
+        
+        # Totals
+        g_total_cost = stock_inv['Total Cost'].sum()
+        g_total_sell = stock_inv['Total Selling'].sum()
+        
+        st.markdown(f"""<div style="display:flex; gap:20px; justify-content:flex-end; margin-top:10px;"><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #f7768e;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Stock Cost</span><br><span style="color:#f7768e; font-size:1.5rem; font-weight:bold;">Rs. {g_total_cost:,.2f}</span></div><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #9ece6a;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Sales Potential</span><br><span style="color:#9ece6a; font-size:1.5rem; font-weight:bold;">Rs. {g_total_sell:,.2f}</span></div></div>""", unsafe_allow_html=True)
+        
+        # Download Button
+        csv = stock_inv.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "📥 Download Stock Report (CSV)",
+            data=csv,
+            file_name=f"Stock_Report_{datetime.now().strftime('%Y-%m-%d')}.csv",
+            mime="text/csv",
+            type="primary"
+        )
+        
+    else:
+        st.info("No stock data available.")
+    
+    st.divider()
 
 
 # Page Config
@@ -1355,70 +1397,79 @@ elif menu == "🔧 Repair Center":
 elif menu == "📦 Product Inventory":
     st.title("📦 Product Inventory")
     
-    # 1. Add Stock Area (Calculator Mode)
-    with st.expander("➕ Add New Stock Item", expanded=True):
-        c1, c2, c3 = st.columns(3)
-        i_name = c1.text_input("Item Name", key="new_i_name")
-        cat = c2.text_input("Category", placeholder="e.g. Battery", key="new_i_cat")
-        qty = c3.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
-        
-        c4, c5 = st.columns(2)
-        p_cost = c4.number_input("Cost Price (Rs.)", 0.0, step=10.0, key="new_i_cost")
-        p_sell = c5.number_input("Selling Price (Rs.)", 0.0, step=10.0, key="new_i_sell")
-        
-        # Calculator Display
-        tot_cost = qty * p_cost
-        tot_sell = qty * p_sell
-        
-        st.markdown(f"""
-<div style="padding:10px; background:#1a1c24; border-radius:8px; margin-bottom:10px;">
-<span style="color:#a9b1d6; margin-right:15px;">📊 Calculator:</span>
-<strong style="color:#f7768e">Total Cost: Rs. {tot_cost:,.0f}</strong> &nbsp;|&nbsp; 
-<strong style="color:#9ece6a">Total Selling: Rs. {tot_sell:,.0f}</strong>
-</div>
-""", unsafe_allow_html=True)
+    # Create Tabs
+    tab1, tab2 = st.tabs(["📦 Stock Management", "💰 Stock Valuation"])
 
-        if st.button("Add Item", type="primary"):
-            if i_name:
-                db.add_inventory_item(i_name, cat if cat else "General", datetime.now(), qty, p_cost, p_sell)
-                st.success("Item Added Successfully!")
-                time.sleep(0.5)
-                st.rerun()
-            else:
-                st.error("Item Name is required.")
+    # TAB 1: STOCK MANAGEMENT
+    with tab1:
+        # 1. Add Stock Area (Calculator Mode)
+        with st.expander("➕ Add New Stock Item", expanded=True):
+            c1, c2, c3 = st.columns(3)
+            i_name = c1.text_input("Item Name", key="new_i_name")
+            cat = c2.text_input("Category", placeholder="e.g. Battery", key="new_i_cat")
+            qty = c3.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
+            
+            c4, c5 = st.columns(2)
+            p_cost = c4.number_input("Cost Price (Rs.)", 0.0, step=10.0, key="new_i_cost")
+            p_sell = c5.number_input("Selling Price (Rs.)", 0.0, step=10.0, key="new_i_sell")
+            
+            # Calculator Display
+            tot_cost = qty * p_cost
+            tot_sell = qty * p_sell
+            
+            st.markdown(f"""
+    <div style="padding:10px; background:#1a1c24; border-radius:8px; margin-bottom:10px;">
+    <span style="color:#a9b1d6; margin-right:15px;">📊 Calculator:</span>
+    <strong style="color:#f7768e">Total Cost: Rs. {tot_cost:,.0f}</strong> &nbsp;|&nbsp; 
+    <strong style="color:#9ece6a">Total Selling: Rs. {tot_sell:,.0f}</strong>
+    </div>
+    """, unsafe_allow_html=True)
 
-    # 2. Search & Filter
-    st.divider()
-    search_inv = st.text_input("Search (Name, Category, or ID)", placeholder="Type to search...")
-    
-    inv = db.get_inventory()
-    if not inv.empty:
-        if search_inv:
-            # Flexible Search
-            mask = inv.apply(lambda x: search_inv.lower() in str(x['item_name']).lower() or 
-                                     search_inv.lower() in str(x['category']).lower() or 
-                                     search_inv.lower() in str(x['id']).lower(), axis=1)
-            inv = inv[mask]
+            if st.button("Add Item", type="primary"):
+                if i_name:
+                    db.add_inventory_item(i_name, cat if cat else "General", datetime.now(), qty, p_cost, p_sell)
+                    st.success("Item Added Successfully!")
+                    time.sleep(0.5)
+                    st.rerun()
+                else:
+                    st.error("Item Name is required.")
+
+        # 2. Search & Filter
+        st.divider()
+        search_inv = st.text_input("Search (Name, Category, or ID)", placeholder="Type to search...")
         
-        # Grid Layout
-        i_cols = st.columns(3)
-        for idx, row in inv.iterrows():
-            with i_cols[idx % 3]:
-                # Visual Logic
-                low_stock = row['quantity'] < 5
-                stock_color = "#f7768e" if low_stock else "#9ece6a"
-                
-                # Calculating Totals for Display
-                t_cost = row['quantity'] * row['cost_price']
-                t_sell = row['quantity'] * row['selling_price']
-                
-                st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">#{row['id']}</span><span class="sub-text">{row['category']}</span></div><div class="big-text">{row['item_name']}</div><div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.9rem;"><span>Cost: Rs. {row['cost_price']}</span><span>Sell: Rs. {row['selling_price']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px; font-size:0.9rem;"><span>T.Cost: Rs. {t_cost:,.0f}</span><span>T.Sell: Rs. {t_sell:,.0f}</span></div><div style="margin-top:10px; padding-top:10px; border-top:1px solid #2c2f3f; text-align:right;"><span style="color:{stock_color}; font-weight:bold; font-size:1.1rem;">{row['quantity']} Units</span></div></div>""", unsafe_allow_html=True)
-                
-                # ACTION: Open Dialog
-                if st.button(f"✏ Manage", key=f"inv_btn_{row['id']}", use_container_width=True):
-                    inventory_dialog(row['id'], row['item_name'], row['selling_price'], row['cost_price'], row['quantity'])
-    else:
-        st.info("Inventory Empty.")
+        inv = db.get_inventory()
+        if not inv.empty:
+            if search_inv:
+                # Flexible Search
+                mask = inv.apply(lambda x: search_inv.lower() in str(x['item_name']).lower() or 
+                                        search_inv.lower() in str(x['category']).lower() or 
+                                        search_inv.lower() in str(x['id']).lower(), axis=1)
+                inv = inv[mask]
+            
+            # Grid Layout
+            i_cols = st.columns(3)
+            for idx, row in inv.iterrows():
+                with i_cols[idx % 3]:
+                    # Visual Logic
+                    low_stock = row['quantity'] < 5
+                    stock_color = "#f7768e" if low_stock else "#9ece6a"
+                    
+                    # Calculating Totals for Display
+                    t_cost = row['quantity'] * row['cost_price']
+                    t_sell = row['quantity'] * row['selling_price']
+                    
+                    st.markdown(f"""<div class="modern-card"><div style="display:flex; justify-content:space-between;"><span class="sub-text">#{row['id']}</span><span class="sub-text">{row['category']}</span></div><div class="big-text">{row['item_name']}</div><div style="display:flex; justify-content:space-between; margin-top:10px; font-size:0.9rem;"><span>Cost: Rs. {row['cost_price']}</span><span>Sell: Rs. {row['selling_price']}</span></div><div style="display:flex; justify-content:space-between; margin-top:5px; font-size:0.9rem;"><span>T.Cost: Rs. {t_cost:,.0f}</span><span>T.Sell: Rs. {t_sell:,.0f}</span></div><div style="margin-top:10px; padding-top:10px; border-top:1px solid #2c2f3f; text-align:right;"><span style="color:{stock_color}; font-weight:bold; font-size:1.1rem;">{row['quantity']} Units</span></div></div>""", unsafe_allow_html=True)
+                    
+                    # ACTION: Open Dialog
+                    if st.button(f"✏ Manage", key=f"inv_btn_{row['id']}", use_container_width=True):
+                        inventory_dialog(row['id'], row['item_name'], row['selling_price'], row['cost_price'], row['quantity'])
+        else:
+            st.info("Inventory Empty.")
+
+    # TAB 2: STOCK VALUATION
+    with tab2:
+        render_stock_valuation_table(db)
 
 
 
@@ -1551,36 +1602,7 @@ elif menu == "📊 Business Reports":
     st.divider()
 
     # --- SECTION C: STOCK VALUATION REPORT (NEW) ---
-    st.header("📦 Detailed Stock Valuation")
-    
-    stock_inv = db.get_inventory()
-    if not stock_inv.empty:
-        # Prepare Data
-        stock_inv['Total Cost'] = stock_inv['quantity'] * stock_inv['cost_price']
-        stock_inv['Total Selling'] = stock_inv['quantity'] * stock_inv['selling_price']
-        
-        # Display
-        st.dataframe(
-            stock_inv[['id', 'item_name', 'category', 'quantity', 'cost_price', 'selling_price', 'Total Cost', 'Total Selling']],
-            use_container_width=True,
-            column_config={
-                "cost_price": st.column_config.NumberColumn("Cost Price", format="Rs. %.0f"),
-                "selling_price": st.column_config.NumberColumn("Selling Price", format="Rs. %.0f"),
-                "Total Cost": st.column_config.NumberColumn("Total Cost Value", format="Rs. %.0f"),
-                "Total Selling": st.column_config.NumberColumn("Total Sales Value", format="Rs. %.0f"),
-            }
-        )
-        
-        # Totals
-        g_total_cost = stock_inv['Total Cost'].sum()
-        g_total_sell = stock_inv['Total Selling'].sum()
-        
-        st.markdown(f"""<div style="display:flex; gap:20px; justify-content:flex-end; margin-top:10px;"><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #f7768e;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Stock Cost</span><br><span style="color:#f7768e; font-size:1.5rem; font-weight:bold;">Rs. {g_total_cost:,.0f}</span></div><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #9ece6a;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Sales Potential</span><br><span style="color:#9ece6a; font-size:1.5rem; font-weight:bold;">Rs. {g_total_sell:,.0f}</span></div></div>""", unsafe_allow_html=True)
-        
-    else:
-        st.info("No stock data available.")
-    
-    st.divider()
+    render_stock_valuation_table(db)
     
     # --- SECTION D: FINANCIAL REPORTS ---
     st.header("💵 Daily Cash Book")
@@ -1733,6 +1755,35 @@ elif menu == "👥 Partners & Ledger":
                  r = st.session_state.get(f"r_{current_party}", 0.0)
                  st.session_state[f"a_{current_party}"] = q * r
 
+             # Callback to handle transaction addition safely
+             def add_transaction_callback():
+                  q_curr = st.session_state.get(f"q_{current_party}", 0)
+                  r_curr = st.session_state.get(f"r_{current_party}", 0.0)
+                  a_curr = st.session_state.get(f"a_{current_party}", 0.0)
+                  
+                  # Get other values (now using keys)
+                  d_val = st.session_state.get(f"d_{current_party}")
+                  desc_val = st.session_state.get(f"desc_{current_party}", "Cash Received")
+                  type_val = st.session_state.get(f"type_{current_party}", "Credit (Receive Payment)")
+                  
+                  if a_curr > 0:
+                      debit = a_curr if "Debit" in type_val else 0.0
+                      credit = a_curr if "Credit" in type_val else 0.0
+                      
+                      # Append Qty Info to description if used
+                      if q_curr > 0:
+                          desc_val = f"{desc_val} ({q_curr} x {r_curr})"
+                      
+                      db.add_ledger_entry(current_party, desc_val, debit, credit, d_val)
+                      st.session_state['tx_msg'] = ('success', "Entry Added!")
+                      
+                      # Reset Calculator Inputs
+                      st.session_state[f"q_{current_party}"] = 0
+                      st.session_state[f"r_{current_party}"] = 0.0
+                      st.session_state[f"a_{current_party}"] = 0.0
+                  else:
+                      st.session_state['tx_msg'] = ('error', "Amount must be greater than 0")
+
              # 1. Calculator Inputs
              cal1, cal2 = st.columns(2)
              cal1.number_input("Quantity (Optional)", min_value=0, step=1, key=f"q_{current_party}", on_change=update_calc)
@@ -1742,34 +1793,22 @@ elif menu == "👥 Partners & Ledger":
 
              # 2. Transaction Details
              dc1, dc2, dc3, dc4 = st.columns([1, 2, 2, 1.5])
-             t_date = dc1.date_input("Date")
-             t_desc = dc2.text_input("Description", "Cash Received")
-             t_type = dc3.radio("Type", ["Credit (Receive Payment)", "Debit (Add Bill)"], horizontal=True)
+             dc1.date_input("Date", key=f"d_{current_party}")
+             dc2.text_input("Description", value="Cash Received", key=f"desc_{current_party}")
+             dc3.radio("Type", ["Credit (Receive Payment)", "Debit (Add Bill)"], horizontal=True, key=f"type_{current_party}")
              
              # Amount (Auto-updated via key)
-             t_amount = dc4.number_input("Amount", min_value=0.0, step=100.0, key=f"a_{current_party}")
+             dc4.number_input("Amount", min_value=0.0, step=100.0, key=f"a_{current_party}")
              
-             if st.button("Add Entry", type="primary"):
-                 if t_amount > 0:
-                     debit = t_amount if "Debit" in t_type else 0.0
-                     credit = t_amount if "Credit" in t_type else 0.0
-                     
-                     # Append Qty Info to description if used
-                     q_val = st.session_state.get(f"q_{current_party}", 0)
-                     if q_val > 0:
-                         t_desc = f"{t_desc} ({q_val} x {st.session_state.get(f'r_{current_party}', 0)})"
-                     
-                     db.add_ledger_entry(current_party, t_desc, debit, credit, t_date)
-                     st.success("Entry Added!")
-                     
-                     # Reset Inputs
-                     st.session_state[f"q_{current_party}"] = 0
-                     st.session_state[f"r_{current_party}"] = 0.0
-                     st.session_state[f"a_{current_party}"] = 0.0
-                     
-                     st.rerun()
+             st.button("Add Entry", type="primary", on_click=add_transaction_callback)
+
+             # Display Message from callback
+             if 'tx_msg' in st.session_state:
+                 msg_type, msg_text = st.session_state.pop('tx_msg')
+                 if msg_type == 'success':
+                     st.success(msg_text)
                  else:
-                     st.error("Amount must be greater than 0")
+                     st.error(msg_text)
 
         # Table
         ledger_df = db.get_ledger_entries(current_party)
