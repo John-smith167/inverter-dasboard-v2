@@ -25,54 +25,156 @@ else:
 db = DatabaseManager()
 
 # --- PDF INVOICE GENERATOR ---
-def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, is_final=False):
+def create_invoice_pdf(client_name, device, parts_list, labor_cost, total_cost, is_final=False, labor_data_json="[]", job_id=None):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
     
-    # Header
-    pdf.set_font("Arial", 'B', 16)
-    if os.path.exists("logo.png"):
-        pdf.image("logo.png", 88.5, 8, 33)
-        pdf.set_y(35)  # Adjust Y to be below logo
-    
-    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
+    # --- HEADER (Professional Style) ---
+    pdf.set_font("Arial", 'B', 20)
+    pdf.set_y(10)
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
-    validation = "FINAL INVOICE" if is_final else "DRAFT ESTIMATE"
-    pdf.cell(200, 10, txt=f"{validation} - {datetime.now().strftime('%Y-%m-%d')}", ln=True, align='C')
-    pdf.ln(10)
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
-    # Client Info
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Client Details:", ln=True)
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt=f"Customer: {client_name}", ln=True)
-    pdf.cell(200, 10, txt=f"Device: {device}", ln=True)
-    pdf.ln(10)
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 30)
     
-    # Table Header
-    pdf.set_fill_color(200, 220, 255)
-    pdf.cell(100, 10, txt="Description", border=1, fill=True)
-    pdf.cell(40, 10, txt="Price (Rs.)", border=1, fill=True) 
-    pdf.ln()
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 16)
+    title = "FINAL REPAIR INVOICE" if is_final else "REPAIR ESTIMATE"
+    pdf.cell(0, 8, txt=title, ln=True, align='C')
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(5)
     
-    # Parts
-    pdf.set_font("Arial", size=11)
+    # --- JOB INFO BOX ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Job ID:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(40, 6, str(job_id) if job_id else "N/A", 0, 0)
+    
+    pdf.set_x(140)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Date:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(30, 6, datetime.now().strftime('%Y-%m-%d'), 0, 1)
+    
+    # Client Rows
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Customer:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, str(client_name), 0, 1)
+    
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Device:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, str(device), 0, 1)
+    
+    pdf.ln(5)
+    
+    # --- TABLE ---
+    # Col Widths: # (10), Description (80), Qty (15), Rate (30), Amount (35), Tech (20) -> 190
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 9)
+    
+    pdf.cell(10, 8, "#", 1, 0, 'C', 1)
+    pdf.cell(80, 8, "Item / Service Description", 1, 0, 'C', 1)
+    pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
+    pdf.cell(30, 8, "Rate (Rs.)", 1, 0, 'C', 1)
+    pdf.cell(35, 8, "Technician", 1, 0, 'C', 1)
+    pdf.cell(20, 8, "Amount", 1, 1, 'C', 1)
+    
+    pdf.set_font("Arial", size=9)
+    
+    idx = 1
+    
+    # 1. Parts Rows
+    # Expecting parts_list to be [{name, qty, rate, amount}]
+    # Handle legacy case where it might be simple list (fallback)
+    
     for part in parts_list:
-        pdf.cell(100, 10, txt=part['name'], border=1)
-        pdf.cell(40, 10, txt=f"{part['price']:.2f}", border=1)
-        pdf.ln()
+        # Check structure
+        name = part.get('name', 'Part')
+        qty = part.get('qty', 1)
+        rate = part.get('rate', 0.0)
+        # If rate is 0/missing but price (total) exists, infer rate or just show total
+        total_p = part.get('amount', part.get('price', 0.0))
+        if rate == 0 and qty > 0: rate = total_p / qty
         
-    # Labor
-    pdf.cell(100, 10, txt="Service Labor Charges", border=1)
-    pdf.cell(40, 10, txt=f"{labor_cost:.2f}", border=1)
-    pdf.ln()
+        pdf.cell(10, 8, str(idx), 1, 0, 'C')
+        pdf.cell(80, 8, str(name)[:45], 1, 0, 'L')
+        pdf.cell(15, 8, str(qty), 1, 0, 'C')
+        pdf.cell(30, 8, f"{rate:,.0f}", 1, 0, 'R')
+        pdf.cell(35, 8, "-", 1, 0, 'C') # No tech for parts usually, or "Store"
+        pdf.cell(20, 8, f"{total_p:,.0f}", 1, 1, 'R')
+        idx += 1
+
+    # 2. Labor Rows
+    labor_detailed = []
+    try:
+        labor_detailed = json.loads(labor_data_json)
+    except:
+        pass
+        
+    if labor_detailed:
+         for item in labor_detailed:
+             desc = "Service: " + item.get('description', 'Repair')
+             cost = float(item.get('cost', 0.0))
+             tech = item.get('technician', 'NA')
+             
+             pdf.cell(10, 8, str(idx), 1, 0, 'C')
+             pdf.cell(80, 8, str(desc)[:45], 1, 0, 'L')
+             pdf.cell(15, 8, "1", 1, 0, 'C')
+             pdf.cell(30, 8, f"{cost:,.0f}", 1, 0, 'R')
+             pdf.cell(35, 8, str(tech)[:18], 1, 0, 'C')
+             pdf.cell(20, 8, f"{cost:,.0f}", 1, 1, 'R')
+             idx += 1
+    else:
+        # Fallback legacy labor
+        if labor_cost > 0:
+            pdf.cell(10, 8, str(idx), 1, 0, 'C')
+            pdf.cell(80, 8, "Service Labor Charges", 1, 0, 'L')
+            pdf.cell(15, 8, "1", 1, 0, 'C')
+            pdf.cell(30, 8, f"{labor_cost:,.0f}", 1, 0, 'R')
+            pdf.cell(35, 8, "NA", 1, 0, 'C')
+            pdf.cell(20, 8, f"{labor_cost:,.0f}", 1, 1, 'R')
+            
+    pdf.ln(5)
     
-    # Total
+    # --- TOTALS ---
+    pdf.set_left_margin(120)
+    pdf.set_x(120)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(100, 10, txt="TOTAL AMOUNT", border=1)
-    pdf.cell(40, 10, txt=f"Rs. {total_cost:,.2f}", border=1)
+    pdf.cell(35, 10, "Total Bill:", 0, 0, 'R')
+    pdf.cell(35, 10, f"Rs. {total_cost:,.2f}", 1, 1, 'R')
+    
+    # Reset Margin
+    pdf.set_left_margin(10)
+    pdf.ln(10)
+    
+    # Amount In Words
+    pdf.set_font("Arial", 'B', 10)
+    try:
+        # Assuming num_to_words is global or imported
+        words = num_to_words(int(total_cost))
+        word_str = f"{words} Rupees Only"
+    except:
+        word_str = "________________________________"
+        
+    pdf.cell(35, 6, "Amount (In Words):", 0, 0)
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(0, 6, word_str, 0, 1)
+    
+    pdf.ln(15)
+    
+    # --- FOOTER / SIGNS ---
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(90, 6, "Technician / Manager", 0, 0, 'L')
+    pdf.cell(0, 6, "Customer Signature", 0, 1, 'R')
+    pdf.ln(5)
+    pdf.cell(90, 6, "_________________", 0, 0, 'L')
+    pdf.cell(0, 6, "_________________", 0, 1, 'R')
     
     return pdf.output(dest='S').encode('latin-1')
 
@@ -85,14 +187,23 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
         if not matches.empty:
             c_row = matches.iloc[0]
             
-    c_address = c_row['address'] if c_row is not None and pd.notna(c_row.get('address')) else ""
-    c_nic = c_row['nic'] if c_row is not None and pd.notna(c_row.get('nic')) else ""
-    c_phone = c_row['phone'] if c_row is not None and pd.notna(c_row.get('phone')) else ""
+    # Helper for placeholders
+    def get_val_or_line(val, line_len=20):
+        # Convert to string and strip
+        s_val = str(val).strip() if pd.notna(val) else ""
+        if s_val.lower() == "nan" or s_val == "":
+            return "_" * line_len
+        return s_val
+
+    # Safely extract
+    c_address = get_val_or_line(c_row.get('address'), 50) if c_row is not None else "_"*50
+    c_nic = get_val_or_line(c_row.get('nic'), 20) if c_row is not None else "_"*20
+    c_phone = get_val_or_line(c_row.get('phone'), 20) if c_row is not None else "_"*20
     
     pdf = FPDF()
     pdf.add_page()
     
-    # --- HEADER SECTION (Figure 2 Style) ---
+    # --- HEADER SECTION ---
     # Logo
     if os.path.exists("logo.png"): 
         pdf.image("logo.png", 88.5, 8, 33)
@@ -108,8 +219,8 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(0, 8, txt="Sales Invoice / Ledger Statement", ln=True, align='C') # Using Generic Title or "Sales Invoice" as per req
-    pdf.line(10, pdf.get_y(), 200, pdf.get_y()) # Line below title
+    pdf.cell(0, 8, txt="Sales Invoice / Ledger Statement", ln=True, align='C')
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(5)
     
     # --- CUSTOMER DETAILS SECTION ---
@@ -117,43 +228,47 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "Customer:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(100, 6, party_name, 0, 0) # Name
+    pdf.cell(100, 6, str(party_name), 'B', 0) # Name with underline
     
     # Right Side: Date
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Date:", 0, 0)
+    pdf.cell(15, 6, "Date:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, datetime.now().strftime('%d-%m-%Y'), 0, 1)
+    pdf.cell(0, 6, datetime.now().strftime('%d-%m-%Y'), 'B', 1)
     
     # Line 2: Address
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "Address:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, c_address, 0, 1)
+    pdf.cell(0, 6, str(c_address), 0, 1)
     
     # Line 3: NIC & Mobile
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(25, 6, "NIC #:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(60, 6, c_nic, 0, 0)
+    pdf.cell(60, 6, str(c_nic), 0, 0)
     
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(20, 6, "Mobile #:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, c_phone, 0, 1)
+    pdf.cell(0, 6, str(c_phone), 0, 1)
     
     pdf.ln(5)
     
     # --- TABLE HEADER ---
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 9)
-    # Widths: Date(25), Description(85), Debit(25), Credit(25), Balance(30) => 190 total
-    pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Date", 1, 0, 'C', 1)
-    pdf.cell(80, 8, "Item / Description", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Debit", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Credit", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Balance", 1, 1, 'C', 1)
+    # Adjusted Columns for Discount
+    # S#(8), Date(20), Item(47), Qty(12), Bill(25), Disc(18), Cash(25), Bal(30) => 185 (Fine for A4)
+    
+    pdf.cell(8, 8, "S#", 1, 0, 'C', 1)
+    pdf.cell(20, 8, "Date", 1, 0, 'C', 1)
+    pdf.cell(47, 8, "Item / Description", 1, 0, 'C', 1)
+    pdf.cell(12, 8, "Qty", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Total Bill", 1, 0, 'C', 1)
+    pdf.cell(18, 8, "Discount", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Cash Rec.", 1, 0, 'C', 1)
+    pdf.cell(30, 8, "Rem. Balance", 1, 1, 'C', 1)
     
     # --- TABLE ROWS ---
     pdf.set_font("Arial", size=8)
@@ -162,24 +277,29 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
         # Handle date object
         d_str = str(row['date'])
         
-        pdf.cell(10, 6, str(idx_counter), 1, 0, 'C')
-        pdf.cell(25, 6, d_str, 1, 0, 'C')
+        pdf.cell(8, 6, str(idx_counter), 1, 0, 'C')
+        pdf.cell(20, 6, d_str, 1, 0, 'C')
         
         # Truncate Desc
         desc_text = str(row['description'])
-        if len(desc_text) > 42: desc_text = desc_text[:40] + ".."
-        pdf.cell(80, 6, desc_text, 1, 0, 'L')
+        if len(desc_text) > 30: desc_text = desc_text[:28] + ".."
+        pdf.cell(47, 6, desc_text, 1, 0, 'L')
+        
+        # Quantity
+        qty_val = row.get('quantity', 0)
+        qty_str = str(int(qty_val)) if pd.notna(qty_val) and qty_val != 0 else "-"
+        pdf.cell(12, 6, qty_str, 1, 0, 'C')
         
         # Numbers
         debit_val = row['debit']
+        discount_val = row.get('discount', 0.0)
         credit_val = row['credit']
-        bal_val = row['Balance'] # Assuming Balance calc passed in df or we assume column exists
-        # Note: If 'Balance' col not in df, ensure logic handles it. 
-        # The caller (main.py) usually prepares df with Balance.
+        bal_val = row['Balance'] 
         
         pdf.cell(25, 6, f"{debit_val:,.0f}" if debit_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(18, 6, f"{discount_val:,.0f}" if discount_val!=0 else "-", 1, 0, 'R')
         pdf.cell(25, 6, f"{credit_val:,.0f}" if credit_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(25, 6, f"{bal_val:,.0f}", 1, 1, 'R')
+        pdf.cell(30, 6, f"{bal_val:,.0f}", 1, 1, 'R')
         
         idx_counter += 1
         
@@ -190,18 +310,15 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.set_x(100) # Move to right half
     pdf.set_font("Arial", 'B', 10)
     
-    # Calculate totals for display if needed, or just show Final Balance
+    # Calculate totals
     total_debit = ledger_df['debit'].sum()
     total_credit = ledger_df['credit'].sum()
     
-    # Draw Summary Box
-    # pdf.rect(pdf.get_x(), pdf.get_y(), 90, 25)
-    
-    pdf.cell(50, 6, "Total Debit:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Bill Amount:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_debit:,.0f}", 0, 1, 'R')
     
     pdf.set_x(100)
-    pdf.cell(50, 6, "Total Credit:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Received:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_credit:,.0f}", 0, 1, 'R')
     
     pdf.line(110, pdf.get_y()+1, 200, pdf.get_y()+1)
@@ -212,14 +329,13 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.cell(50, 8, "Net Balance:", 0, 0, 'R')
     pdf.cell(40, 8, f"{final_balance:,.0f}", 1, 1, 'R', fill=True) 
     
-    pdf.ln(10)
+    pdf.ln(15)
     
-    # Amount in Words (Placeholder)
-    # pdf.set_font("Arial", 'I', 9)
-    # pdf.cell(0, 6, "Amount (in Words): __________________________________________", 0, 1)
-    
-    # Signatures
-    pdf.set_y(-30)
+    # Signatures (Relative positioning to avoid Page 2 drift)
+    # Check Y position, if too low, add page
+    if pdf.get_y() > 250:
+        pdf.add_page()
+        
     pdf.set_font("Arial", 'B', 9)
     pdf.cell(90, 10, "Prepared By: _________________", 0, 0, 'L')
     pdf.cell(0, 10, "Receiver Signature: _________________", 0, 1, 'R')
@@ -237,17 +353,60 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
         pdf.image("logo.png", 88.5, 8, 33)
         pdf.set_y(35)
 
-    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
-    pdf.set_font("Arial", size=10)
-    pdf.cell(200, 5, txt="Owner: Saad Rao | Contact: 0300-1234567", ln=True, align='C')  # Placeholder number
-    pdf.ln(5)
-    pdf.cell(200, 10, txt="EMPLOYEE PAYROLL STATEMENT", ln=True, align='C')
-    pdf.ln(5)
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
-    # Employee Info
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt=f"Employee: {employee_name}", ln=True)
-    pdf.cell(200, 10, txt=f"Date: {datetime.now().strftime('%Y-%m-%d')}", ln=True)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 14)
+    pdf.cell(0, 8, txt="EMPLOYEE PAYROLL STATEMENT", ln=True, align='C')
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    
+    # Fetch Employee Details
+    employees = db.get_all_employees()
+    e_row = None
+    if not employees.empty:
+        matches = employees[employees['name'] == employee_name]
+        if not matches.empty:
+            e_row = matches.iloc[0]
+
+    # Helper
+    def get_val_or_line(val, line_len=20):
+        s_val = str(val).strip() if pd.notna(val) else ""
+        if s_val.lower() == "nan" or s_val == "":
+            return "_" * line_len
+        return s_val
+
+    e_phone = get_val_or_line(e_row.get('phone'), 20) if e_row is not None else "_"*20
+    e_cnic = get_val_or_line(e_row.get('cnic'), 25) if e_row is not None else "_"*25
+    
+    # Employee Info Section
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 10)
+    
+    # Line 1: Name & Date
+    pdf.cell(20, 6, "Employee:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(105, 6, str(employee_name), 'B', 0)
+    
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(15, 6, "Date:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, datetime.now().strftime('%d-%m-%Y'), 'B', 1)
+    
+    # Line 2: Phone & CNIC
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Phone #:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(105, 6, str(e_phone), 'B', 0)
+    
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(15, 6, "CNIC:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, str(e_cnic), 'B', 1)
+    
     pdf.ln(5)
     
     # Table Header
@@ -288,80 +447,335 @@ def create_employee_payroll_pdf(employee_name, ledger_df, final_balance):
     pdf.cell(140, 10, balance_label, 0, 0, 'R')
     pdf.cell(55, 10, f"Rs. {abs(final_balance):,.2f}", 1, 1, 'C')
     
+    pdf.ln(10)
+    
+    # Remarks Section
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Remarks:", 0, 1)
+    pdf.line(10, pdf.get_y()+6, 200, pdf.get_y()+6) # Underline for remarks
+    pdf.ln(8)
+    
+    # Signatures
+    pdf.ln(10)
+    pdf.cell(90, 6, "Employee Signature", 0, 0, 'L')
+    pdf.cell(0, 6, "Approved By", 0, 1, 'R')
+    pdf.ln(8)
+    pdf.cell(90, 6, "_________________", 0, 0, 'L')
+    pdf.cell(0, 6, "_________________", 0, 1, 'R')
+    
     return pdf.output(dest='S').encode('latin-1')
 
 
-def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total):
+def num_to_words(n):
+    try:
+        n = int(n)
+        if n < 0: return "Minus " + num_to_words(-n)
+        if n == 0: return ""
+        
+        units = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
+        teens = ["", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"]
+        tens = ["", "Ten", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+        
+        if n < 10: return units[n]
+        if n < 20: return teens[n-10] if n > 10 else tens[1]
+        if n < 100: return tens[n // 10] + (" " + units[n % 10] if n % 10 != 0 else "")
+        if n < 1000: return units[n // 100] + " Hundred" + (" " + num_to_words(n % 100) if n % 100 != 0 else "")
+        if n < 100000: return num_to_words(n // 1000) + " Thousand" + (" " + num_to_words(n % 1000) if n % 1000 != 0 else "")
+        if n < 10000000: return num_to_words(n // 100000) + " Lakh" + (" " + num_to_words(n % 100000) if n % 100000 != 0 else "")
+        return num_to_words(n // 10000000) + " Crore" + (" " + num_to_words(n % 10000000) if n % 10000000 != 0 else "")
+    except:
+        return ""
+
+def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total, previous_balance, outstanding_balance, cash_received=0.0):
     pdf = FPDF()
+    pdf.add_page()
+    
+    # --- HEADER ---
+    pdf.set_font("Arial", 'B', 20)
+    pdf.set_y(10)
+    # Right align company info approximately or Center
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
+    
+    # Logo Overlap check
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 30)
+
+    pdf.ln(5)
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 8, txt="Sales Invoice", ln=True, align='C')
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(5)
+
+    # --- INVOICE & CUSTOMER DETAILS ---
+    
+    # Invoice No & Date
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Invoice #", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(40, 6, str(invoice_no), 0, 0)
+    
+    pdf.set_x(140)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Bill Date :", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(30, 6, str(date_val), 0, 1)
+    
+    pdf.line(10, pdf.get_y()+1, 200, pdf.get_y()+1)
+    pdf.ln(3)
+
+    # Customer Details
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Customer:", 0, 0)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(100, 6, str(customer), 0, 1)
+    
+    pdf.ln(5)
+
+    # --- TABLE HEADER ---
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 10)
+    
+    # Widths: S#(10), Item(80), Quantity(15), Rate(25), Disc(20), Net Amount(40) => 190
+    pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
+    pdf.cell(80, 8, "Item Description", 1, 0, 'C', 1)
+    pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
+    pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
+    pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
+    pdf.cell(40, 8, "Net Amount", 1, 1, 'C', 1)
+
+    # --- TABLE ROWS ---
+    pdf.set_font("Arial", size=9)
+    idx = 1
+    for _, row in items_df.iterrows():
+        item_name = str(row['Item Name'])[:45]
+        qty = float(row['Qty'])
+        ret = float(row.get('Return Qty', 0))
+        net_qty = qty - ret
+        rate = float(row['Rate'])
+        discount = float(row.get('Discount', 0))
+        total = float(row['Total'])
+        
+        pdf.cell(10, 8, str(idx), 1, 0, 'C')
+        pdf.cell(80, 8, item_name, 1, 0, 'L')
+        pdf.cell(15, 8, f"{net_qty:g}", 1, 0, 'C')
+        pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
+        pdf.cell(20, 8, f"{discount:g}", 1, 0, 'R')
+        pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
+        idx += 1
+        
+    pdf.ln(2)
+
+    # --- SUMMARY SECTION ---
+    y_before_totals = pdf.get_y()
+    
+    # Right Side Totals
+    pdf.set_left_margin(110)
+    pdf.set_x(110)
+    pdf.set_font("Arial", 'B', 10)
+    
+    pdf.cell(45, 7, "Total:", 0, 0, 'R')
+    pdf.cell(35, 7, f"{subtotal:,.2f}", 1, 1, 'R')
+    
+    if freight > 0 or misc > 0:
+        extras = freight + misc
+        pdf.cell(45, 7, "Freight/Labor:", 0, 0, 'R')
+        pdf.cell(35, 7, f"{extras:,.2f}", 1, 1, 'R')
+
+    pdf.cell(45, 7, "Bill Total:", 0, 0, 'R')
+    pdf.cell(35, 7, f"{grand_total:,.2f}", 1, 1, 'R')
+
+    if cash_received > 0:
+        pdf.cell(45, 7, "Cash Received:", 0, 0, 'R')
+        pdf.cell(35, 7, f"{cash_received:,.2f}", 1, 1, 'R')
+    
+    current_bill_bal = grand_total - cash_received
+    pdf.cell(45, 7, "Bill Balance:", 0, 0, 'R')
+    pdf.cell(35, 7, f"{current_bill_bal:,.2f}", 1, 1, 'R')
+    
+    pdf.cell(45, 7, "Previous Balance:", 0, 0, 'R')
+    pdf.cell(35, 7, f"{previous_balance:,.2f}", 1, 1, 'R')
+    
+    pdf.cell(45, 7, "Outstanding Balance:", 0, 0, 'R')
+    pdf.cell(35, 7, f"{outstanding_balance:,.2f}", 1, 1, 'R')
+    
+    y_after_totals = pdf.get_y()
+    
+    # --- FOOTER CONTENT (Left Side) ---
+    pdf.set_left_margin(10)
+    pdf.set_y(y_before_totals)
+    
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(20, 6, "Remarks:", 0, 1)
+    pdf.set_font("Arial", size=9)
+    pdf.multi_cell(90, 5, "Warranty claims as per company policy. No return/change without invoice.", border=1)
+    
+    pdf.set_y(max(y_after_totals, pdf.get_y()) + 5)
+    
+    # Amount In Words
+    pdf.set_font("Arial", 'B', 10)
+    try:
+        words = num_to_words(int(grand_total))
+        word_str = f"{words} Rupees Only"
+    except:
+        word_str = "________________________________"
+        
+    pdf.cell(35, 6, "Amount (In Words):", 0, 0)
+    pdf.set_font("Arial", 'I', 10)
+    pdf.cell(0, 6, word_str, 0, 1)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    
+    pdf.ln(15)
+    
+    # Signatures
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(90, 6, "Prepared By", 0, 0, 'L')
+    pdf.cell(0, 6, "Receiver Signature", 0, 1, 'R')
+    pdf.ln(5)
+    pdf.cell(90, 6, "_________________", 0, 0, 'L')
+    pdf.cell(0, 6, "_________________", 0, 1, 'R')
+
+    return pdf.output(dest='S').encode('latin-1')
+
+def create_stock_valuation_pdf(stock_df):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    # Header
+    pdf.set_font("Arial", 'B', 20)
+    # Logo placement for Landscape (Width ~297mm)
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 33)
+        
+    pdf.set_y(10)
+    pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
+    
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
+    pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
+    
+    pdf.ln(5)
+    
+    pdf.set_font("Arial", size=12)
+    # Title
+    pdf.cell(0, 8, txt="Detailed Stock Valuation Report", ln=True, align='C')
+    pdf.line(10, pdf.get_y(), 287, pdf.get_y()) # Line across page (A4 Land = 297mm, margin 10)
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 6, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
+    pdf.ln(5)
+
+    # Table Config
+    pdf.set_fill_color(220, 220, 220)
+    pdf.set_font("Arial", 'B', 10)
+    
+    pdf.cell(10, 10, "#", 1, 0, 'C', 1)
+    pdf.cell(60, 10, "Item Name", 1, 0, 'C', 1)
+    pdf.cell(35, 10, "Category", 1, 0, 'C', 1)
+    pdf.cell(20, 10, "Qty", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Cost Price", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Sell Price", 1, 0, 'C', 1)
+    pdf.cell(35, 10, "Total Cost", 1, 0, 'C', 1)
+    pdf.cell(35, 10, "Total Sales", 1, 1, 'C', 1)
+    
+    # Rows
+    pdf.set_font("Arial", size=9)
+    idx = 1
+    for _, row in stock_df.iterrows():
+        item = str(row['item_name'])[:35]
+        cat = str(row['category'])[:20]
+        
+        pdf.cell(10, 8, str(idx), 1, 0, 'C')
+        pdf.cell(60, 8, item, 1, 0, 'L')
+        pdf.cell(35, 8, cat, 1, 0, 'L')
+        pdf.cell(20, 8, str(row['quantity']), 1, 0, 'C')
+        pdf.cell(30, 8, f"{row['cost_price']:,.2f}", 1, 0, 'R')
+        pdf.cell(30, 8, f"{row['selling_price']:,.2f}", 1, 0, 'R')
+        pdf.cell(35, 8, f"{row['Total Cost']:,.2f}", 1, 0, 'R')
+        pdf.cell(35, 8, f"{row['Total Selling']:,.2f}", 1, 1, 'R')
+        idx += 1
+        
+    pdf.ln(5)
+    
+    # Summary Box
+    g_total_cost = stock_df['Total Cost'].sum()
+    g_total_sell = stock_df['Total Selling'].sum()
+    
+    pdf.set_font("Arial", 'B', 11)
+    pdf.cell(185, 10, "Grand Totals:", 0, 0, 'R')
+    pdf.set_fill_color(255, 230, 230)
+    pdf.cell(35, 10, f"{g_total_cost:,.2f}", 1, 0, 'R', 1)
+    pdf.set_fill_color(230, 255, 230)
+    pdf.cell(35, 10, f"{g_total_sell:,.2f}", 1, 1, 'R', 1)
+    
+    return pdf.output(dest='S').encode('latin-1')
+
+def create_recovery_list_pdf(recovery_df, grand_total):
+    pdf = FPDF(orientation='L', unit='mm', format='A4')
     pdf.add_page()
     pdf.set_font("Arial", size=12)
 
     # Header
     pdf.set_font("Arial", 'B', 16)
     if os.path.exists("logo.png"):
-        pdf.image("logo.png", 88.5, 8, 33)
-        pdf.set_y(35)
-
+        pdf.image("logo.png", 10, 8, 33)
+        
+    pdf.set_y(15)
     pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
-    pdf.set_font("Arial", size=10)
-    pdf.cell(200, 10, txt="SALES INVOICE", ln=True, align='C')
-    pdf.ln(5)
-
-    # Info
     pdf.set_font("Arial", size=12)
-    pdf.cell(100, 8, txt=f"Invoice #: {invoice_no}", ln=0)
-    pdf.cell(90, 8, txt=f"Date: {date_val}", ln=1, align='R')
-    pdf.cell(100, 8, txt=f"Customer: {customer}", ln=1)
-    pdf.ln(5)
-
-    # Table Header
-    pdf.set_fill_color(220, 220, 220)
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(80, 10, "Item Description", 1, 0, 'C', 1)
-    pdf.cell(20, 10, "Qty", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Rate", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Return", 1, 0, 'C', 1)
-    pdf.cell(40, 10, "Total", 1, 1, 'C', 1)
-
-    # Rows
-    pdf.set_font("Arial", size=9)
-    for _, row in items_df.iterrows():
-        item = str(row['Item Name'])[:40]
-        qty = float(row['Qty'])
-        rate = float(row['Rate'])
-        ret = float(row['Return Qty'])
-        tot = float(row['Total'])
-        
-        pdf.cell(80, 10, item, 1)
-        pdf.cell(20, 10, f"{qty:g}", 1, 0, 'C')
-        pdf.cell(25, 10, f"{rate:g}", 1, 0, 'R')
-        pdf.cell(25, 10, f"{ret:g}", 1, 0, 'C')
-        pdf.cell(40, 10, f"{tot:,.2f}", 1, 1, 'R')
-
-    pdf.ln(5)
-
-    # Totals
+    pdf.cell(0, 8, txt="Customer Recovery List", ln=True, align='C')
     pdf.set_font("Arial", size=10)
-    pdf.cell(140, 8, "Subtotal:", 0, 0, 'R')
-    pdf.cell(50, 8, f"Rs. {subtotal:,.2f}", 1, 1, 'R')
-    
-    if freight > 0:
-        pdf.cell(140, 8, "Freight / Kiraya:", 0, 0, 'R')
-        pdf.cell(50, 8, f"Rs. {freight:,.2f}", 1, 1, 'R')
-        
-    if misc > 0:
-        pdf.cell(140, 8, "Labor / Misc:", 0, 0, 'R')
-        pdf.cell(50, 8, f"Rs. {misc:,.2f}", 1, 1, 'R')
-        
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(140, 10, "Net Payable:", 0, 0, 'R')
-    pdf.cell(50, 10, f"Rs. {grand_total:,.2f}", 1, 1, 'R')
-
+    pdf.cell(0, 6, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
     pdf.ln(10)
-    pdf.set_font("Arial", 'I', 8)
-    pdf.cell(0, 10, "Thank you for your business!", 0, 1, 'C')
+    
+    # Table Config
+    pdf.set_fill_color(220, 220, 220)
+    pdf.set_font("Arial", 'B', 9)
+    
+    pdf.cell(50, 10, "Customer Name", 1, 0, 'C', 1)
+    pdf.cell(25, 10, "City", 1, 0, 'C', 1)
+    pdf.cell(28, 10, "Phone", 1, 0, 'C', 1)
+    pdf.cell(12, 10, "Inv", 1, 0, 'C', 1)
+    pdf.cell(12, 10, "Chg", 1, 0, 'C', 1)
+    pdf.cell(12, 10, "Kit", 1, 0, 'C', 1)
+    pdf.cell(12, 10, "Oth", 1, 0, 'C', 1)
+    pdf.cell(28, 10, "Sales", 1, 0, 'C', 1)
+    pdf.cell(28, 10, "Paid", 1, 0, 'C', 1)
+    pdf.cell(25, 10, "Open Bal", 1, 0, 'C', 1)
+    pdf.cell(30, 10, "Net Due", 1, 1, 'C', 1)
+    
+    # Rows
+    pdf.set_font("Arial", size=8)
+    for _, row in recovery_df.iterrows():
+        name = str(row['name'])[:28]
+        city = str(row['city'])[:15]
+        phone = str(row['phone'])
+        
+        pdf.cell(50, 8, name, 1)
+        pdf.cell(25, 8, city, 1)
+        pdf.cell(28, 8, phone, 1)
+        pdf.cell(12, 8, str(int(row['inverter_count'])), 1, 0, 'C')
+        pdf.cell(12, 8, str(int(row['charger_count'])), 1, 0, 'C')
+        pdf.cell(12, 8, str(int(row['kit_count'])), 1, 0, 'C')
+        pdf.cell(12, 8, str(int(row['other_count'])), 1, 0, 'C')
+        pdf.cell(28, 8, f"{row['total_sales']:,.0f}", 1, 0, 'R')
+        pdf.cell(28, 8, f"{row['total_paid']:,.0f}", 1, 0, 'R')
+        pdf.cell(25, 8, f"{row['opening_balance']:,.0f}", 1, 0, 'R')
+        pdf.cell(30, 8, f"{row['net_outstanding']:,.0f}", 1, 1, 'R')
 
-
+    pdf.ln(5)
+    
+    # Summary
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(220, 10, "Overall Total Outstanding:", 0, 0, 'R')
+    pdf.set_fill_color(200, 220, 255)
+    pdf.cell(42, 10, f"Rs. {grand_total:,.2f}", 1, 1, 'R', 1)
+    
     return pdf.output(dest='S').encode('latin-1')
 
 def render_stock_valuation_table(db_instance):
@@ -391,12 +805,13 @@ def render_stock_valuation_table(db_instance):
         st.markdown(f"""<div style="display:flex; gap:20px; justify-content:flex-end; margin-top:10px;"><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #f7768e;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Stock Cost</span><br><span style="color:#f7768e; font-size:1.5rem; font-weight:bold;">Rs. {g_total_cost:,.2f}</span></div><div style="text-align:right; padding:10px; background:#1a1c24; border-radius:10px; border:1px solid #9ece6a;"><span style="color:#a9b1d6; font-size:0.9rem;">Total Sales Potential</span><br><span style="color:#9ece6a; font-size:1.5rem; font-weight:bold;">Rs. {g_total_sell:,.2f}</span></div></div>""", unsafe_allow_html=True)
         
         # Download Button
-        csv = stock_inv.to_csv(index=False).encode('utf-8')
+        # Download Button
+        pdf_bytes = create_stock_valuation_pdf(stock_inv)
         st.download_button(
-            "📥 Download Stock Report (CSV)",
-            data=csv,
-            file_name=f"Stock_Report_{datetime.now().strftime('%Y-%m-%d')}.csv",
-            mime="text/csv",
+            "📥 Download Stock Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"Stock_Report_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+            mime="application/pdf",
             type="primary"
         )
         
@@ -411,7 +826,7 @@ st.set_page_config(page_title="SK INVERTX TRADERS", layout="wide", page_icon="�
 
 # --- INTERACTIVE DIALOGS ---
 @st.dialog("Repair Job Manager")
-def repair_dialog(job_id, client_name, issue, model, current_parts, current_labor, phone_number, total_bill_val=0.0, parts_data_json="[]"):
+def repair_dialog(job_id, client_name, issue, model, current_parts, current_labor, phone_number, total_bill_val=0.0, parts_data_json="[]", labor_data_json="[]", assigned_tech="Unassigned"):
     st.caption(f"Job #{job_id} • {model}")
     
     # Parse Saved Data
@@ -453,7 +868,8 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     inventory = db.get_inventory()
     parts_cost = 0.0
     selected_parts_db = []     # For Stock Deduction (Only ID'd items)
-    all_billable_parts = []    # For Invoice (Includes Custom)
+    all_billable_parts = []    # For Invoice (Legacy - Strings)
+    parts_list_for_pdf = []    # For Invoice (Detailed)
     
     # Prepare Data for Saving
     current_parts_data = []
@@ -483,7 +899,9 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
                 
                 # Add to lists
                 selected_parts_db.append({'id': k, 'qty': p_qty})
-                current_parts_data.append({'id': k, 'qty': p_qty, 'type': 'stock', 'name': item['item_name']})
+                # Add selling_price to saved data to persist 'current' price if needed in future, though not strictly schema required
+                current_parts_data.append({'id': k, 'qty': p_qty, 'type': 'stock', 'name': item['item_name'], 'price': item['selling_price']})
+                parts_list_for_pdf.append({'name': item['item_name'], 'qty': p_qty, 'rate': item['selling_price'], 'amount': line_total})
                 
                 # Show qty in name if > 1
                 disp_name = f"{item['item_name']} (x{p_qty})" if p_qty > 1 else item['item_name']
@@ -507,9 +925,6 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
         def_c_qty = sc.get('qty', 1)
         
     # We use key+job_id to persist in session, but we also want defaults.
-    # NumberInput default is 'value'. TextInput default is 'value'.
-    # If session state exists, it overrides value. 
-    # So if user opens dialog first time, value is used.
     
     col_custom1, col_custom2, col_custom3 = st.columns([2, 1, 1])
     with col_custom1:
@@ -524,15 +939,85 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
         parts_cost += c_total
         disp_c_name = f"{c_name} (Custom) (x{c_qty})" if c_qty > 1 else f"{c_name} (Custom)"
         all_billable_parts.append({'name': disp_c_name, 'price': c_total})
+        parts_list_for_pdf.append({'name': c_name, 'qty': c_qty, 'rate': c_price, 'amount': c_total})
         
         current_parts_data.append({'id': None, 'qty': c_qty, 'type': 'custom', 'name': c_name, 'unit_price': c_price})
         
         st.success(f"✅ Added: {disp_c_name} - Rs. {c_total:,.2f}")
 
 
-    # Labor
-    labor = st.number_input("Labor Cost (Rs.)", min_value=0.0, value=float(current_labor) if current_labor else 0.0, step=100.0, key=f"diag_labor_{job_id}")
+    # Labor & Services
+    st.markdown("---")
+    st.markdown("**🔧 Labor & Services**")
     
+    # Init Labor Data
+    labor_list = []
+    try:
+        labor_list = json.loads(labor_data_json)
+    except:
+        pass
+        
+    if not labor_list and current_labor and float(current_labor) > 0:
+        # Migration for legacy single labor value
+        labor_list = [{"description": "Repair Service", "qty": 1, "rate": float(current_labor), "cost": float(current_labor), "technician": assigned_tech}]
+        
+    labor_df = pd.DataFrame(labor_list)
+    
+    # Ensure correct columns for new schema
+    required_cols = ["description", "qty", "rate"] # 'cost' and 'technician' are derived/hidden
+    
+    # Normalize existing data
+    if not labor_df.empty:
+        if "rate" not in labor_df.columns and "cost" in labor_df.columns:
+             # Legacy migration: assume rate = cost if qty missing or 1
+             labor_df["rate"] = labor_df["cost"]
+        if "qty" not in labor_df.columns:
+             labor_df["qty"] = 1
+             
+    for col in required_cols:
+        if col not in labor_df.columns:
+             if col == "qty": labor_df[col] = 1
+             elif col == "rate": labor_df[col] = 0.0
+             else: labor_df[col] = ""
+             
+    # Filter for display
+    display_df = labor_df[["description", "qty", "rate"]]
+            
+    # Editor
+    updated_labor_display = st.data_editor(
+        display_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "description": st.column_config.TextColumn("Description / Device", required=True, width="large"),
+            "qty": st.column_config.NumberColumn("Quantity", min_value=1, step=1, width="small"),
+            "rate": st.column_config.NumberColumn("Rate (Rs.)", min_value=0, step=100, width="small"),
+        },
+        key=f"labor_grid_{job_id}"
+    )
+    
+    # Calculate Total Labor & Reconstruct Full JSON
+    labor = 0.0
+    final_labor_records = []
+    
+    if not updated_labor_display.empty:
+        for index, row in updated_labor_display.iterrows():
+            q = int(row.get('qty', 1))
+            r = float(row.get('rate', 0.0))
+            line_total = q * r
+            labor += line_total
+            
+            # Create record with all hidden fields needed for backend
+            final_labor_records.append({
+                "description": row.get('description'),
+                "qty": q,
+                "rate": r,
+                "cost": line_total, # Backend expects 'cost' as total for ledger crediting
+                "technician": assigned_tech # Auto-assign current job's tech
+            })
+        
+    final_labor_json = json.dumps(final_labor_records)
+
     # Live Total
     total = parts_cost + labor
     st.markdown(f"### 💰 Estimated Total: Rs. {total:,.2f}")
@@ -548,17 +1033,17 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     
     with col_save:
         if st.button("💾 Save Progress", use_container_width=True):
-            db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json)
+            db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json, labor_data_json=final_labor_json)
             st.toast("Progress Saved!")
             st.rerun()
 
     with col_print:
         if st.button("🖨️ Print Invoice", use_container_width=True):
              # 1. AUTO-SAVE State
-             db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json)
+             db.update_repair_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, new_status="In Progress", parts_data_json=final_parts_json, labor_data_json=final_labor_json)
              
              # 2. Generate PDF
-             pdf_bytes = create_invoice_pdf(client_name, model, all_billable_parts, labor, total, is_final=False) # Draft if not closed
+             pdf_bytes = create_invoice_pdf(client_name, model, parts_list_for_pdf, labor, total, is_final=False, labor_data_json=final_labor_json, job_id=job_id) # Draft if not closed
              st.session_state['download_invoice'] = {
                 'data': pdf_bytes,
                 'name': f"Invoice_{client_name}.pdf"
@@ -568,7 +1053,7 @@ def repair_dialog(job_id, client_name, issue, model, current_parts, current_labo
     with col_close:
         if st.button("✅ Complete Job", type="primary", use_container_width=True):
             # Close Job - Deduct Stock ONLY for inventory items
-            db.close_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, parts_data_json=final_parts_json)
+            db.close_job(job_id, labor, parts_cost, total, final_parts_str, selected_parts_db, parts_data_json=final_parts_json, labor_data_json=final_labor_json)
             st.success("Job Completed & Moved to History!")
             st.rerun()
 
@@ -951,7 +1436,7 @@ def update_sales_grid():
     added_rows = state.get("added_rows", [])
     for new_row in added_rows:
         # Fill defaults if missing
-        defaults = {"Item Name": "", "Qty": 1, "Rate": 0.0, "Return Qty": 0, "Total": 0.0}
+        defaults = {"Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0}
         defaults.update(new_row)
         df = pd.concat([df, pd.DataFrame([defaults])], ignore_index=True)
 
@@ -960,10 +1445,11 @@ def update_sales_grid():
     df = df.reset_index(drop=True)
     df['Qty'] = pd.to_numeric(df['Qty'], errors='coerce').fillna(0)
     df['Rate'] = pd.to_numeric(df['Rate'], errors='coerce').fillna(0.0)
+    df['Discount'] = pd.to_numeric(df.get('Discount', 0), errors='coerce').fillna(0.0)
     df['Return Qty'] = pd.to_numeric(df['Return Qty'], errors='coerce').fillna(0)
     
     # Apply Formula
-    df['Total'] = (df['Qty'] - df['Return Qty']) * df['Rate']
+    df['Total'] = ((df['Qty'] - df['Return Qty']) * df['Rate']) - df['Discount']
     
     # Save back
     st.session_state.sales_grid_data = df
@@ -981,7 +1467,7 @@ if menu == "⚡ Quick Invoice":
         if 'sales_grid_data' not in st.session_state:
             # Initialize with 3 empty rows for convenience
             st.session_state.sales_grid_data = pd.DataFrame(
-                [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
+                [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
             )
 
         # 1. HEADER SECTION
@@ -1016,6 +1502,7 @@ if menu == "⚡ Quick Invoice":
                 "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
                 "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
                 "Rate": st.column_config.NumberColumn("Rate (Rs.)", min_value=0.0, step=10.0, required=True),
+                "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=10.0),
                 "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
                 "Total": st.column_config.NumberColumn("Total", disabled=True) # Calculated column
             },
@@ -1042,6 +1529,8 @@ if menu == "⚡ Quick Invoice":
             grand_total = subtotal + freight + misc
             st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
             
+            cash_received = st.number_input("Cash Received", min_value=0.0, step=100.0)
+            
             st.write("")
             if st.button("✅ Save & Print", type="primary", use_container_width=True):
                 if customer_name and grand_total >= 0:
@@ -1055,12 +1544,31 @@ if menu == "⚡ Quick Invoice":
                         success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
                         
                         if success:
+                            # Record Cash Payment if any
+                            if cash_received > 0:
+                                db.add_ledger_entry(customer_name, f"Cash Payment for Inv #{next_inv}", 0.0, cash_received, inv_date)
+                            
                             st.success(f"Invoice {next_inv} Saved Successfully!")
+                            
+                            # Fetch Balances for Invoice
+                            inv_led = db.get_ledger_entries(customer_name)
+                            cur_bal_n = 0.0
+                            if not inv_led.empty:
+                                cur_bal_n = inv_led['debit'].sum() - inv_led['credit'].sum()
+                            
+                            # Previous Balance logic:
+                            # Current Balance = Previous + GrandTotal - CashReceived
+                            # => Previous = Current - GrandTotal + CashReceived
+                            # (Wait, if we already added ledger entries for GrandTotal AND CashReceived, then Current represents the final state)
+                            # So Previous Balance is Current - (Total - Cash) ? No.
+                            # Previous Balance is strictly what it was BEFORE this transaction (invoice + cash).
+                            # So Previous = Current - GrandTotal + CashReceived
+                            prev_bal_n = cur_bal_n - grand_total + cash_received
                             
                             # Generate PDF
                             pdf_bytes = create_sales_invoice_pdf(
-                                next_inv, customer_name, datetime.now().strftime('%Y-%m-%d'), 
-                                valid_items, subtotal, freight, misc, grand_total
+                                next_inv, customer_name, inv_date.strftime('%Y-%m-%d'), 
+                                valid_items, subtotal, freight, misc, grand_total, prev_bal_n, cur_bal_n, cash_received
                             )
                             
                             # Show Download
@@ -1134,9 +1642,17 @@ if menu == "⚡ Quick Invoice":
                      if st.button("🖨️ Re-Print Invoice", key=f"reprint_{search_inv_input}", use_container_width=True):
                          # Generate PDF
                          # We treat 'diff' as 'misc' for simplicity since we can't distinguish freight vs labor
+                         # Calculate Balances for History Reprint
+                         # We show Current Balance (Outstanding) and derive Previous
+                         led_h = db.get_ledger_entries(cust_name_h)
+                         cur_bal_h = 0.0
+                         if not led_h.empty:
+                             cur_bal_h = led_h['debit'].sum() - led_h['credit'].sum()
+                         prev_bal_h = cur_bal_h - ledger_total
+                         
                          pdf_bytes_h = create_sales_invoice_pdf(
                                 search_inv_input, cust_name_h, str(date_h).split(' ')[0], 
-                                disp_ph, subtotal_h, 0.0, diff, ledger_total
+                                disp_ph, subtotal_h, 0.0, diff, ledger_total, prev_bal_h, cur_bal_h
                             )
                          st.download_button(
                                 "📥 Download PDF", 
@@ -1347,7 +1863,9 @@ elif menu == "🔧 Repair Center":
                     # ACTION: Open Dialog
                     if st.button(f"Manage {row['client_name']}", key=f"btn_{row['id']}", use_container_width=True):
                         p_data = row['parts_data'] if 'parts_data' in row and pd.notna(row['parts_data']) else "[]"
-                        repair_dialog(row['id'], row['client_name'], row['issue'], row['inverter_model'], row['used_parts'], row['service_cost'], row['phone_number'], row['total_cost'], p_data)
+                        l_data = row.get('labor_data', "[]")
+                        if pd.isna(l_data): l_data = "[]"
+                        repair_dialog(row['id'], row['client_name'], row['issue'], row['inverter_model'], row['used_parts'], row['service_cost'], row['phone_number'], row['total_cost'], p_data, l_data, row['assigned_to'])
 
         else:
             st.info("No active jobs. Good job team! 🌴")
@@ -1702,18 +2220,14 @@ elif menu == "📊 Business Reports":
         st.markdown(f"""<div style="text-align:right; font-size:1.5rem; font-weight:bold; margin-top:15px; padding:20px; border:2px solid #7aa2f7; border-radius:10px;">Overall Total Outstanding: <span style="color:#7aa2f7">Rs. {grand_outstanding:,.2f}</span></div>""", unsafe_allow_html=True)
         
         # Export Button
-        # Prepare Excel
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-             recovery_df.to_excel(writer, index=False, sheet_name='Recovery List')
-             
-        excel_data = output.getvalue()
+        # Export Button
+        pdf_rec_bytes = create_recovery_list_pdf(recovery_df, grand_outstanding)
         
         st.download_button(
-             label="📥 Download Full Report (.xlsx)",
-             data=excel_data,
-             file_name=f"Recovery_List_{datetime.now().strftime('%Y-%m-%d')}.xlsx",
-             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+             label="📥 Download Full Report (PDF)",
+             data=pdf_rec_bytes,
+             file_name=f"Recovery_List_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+             mime="application/pdf",
              type="primary"
         )
     else:
@@ -1749,58 +2263,78 @@ elif menu == "👥 Partners & Ledger":
         
         # Add Entry Form
         with st.expander("➕ Add Transaction", expanded=False):
+             # Callback to handle transaction addition safely
+             def add_transaction_callback():
+                  d_val = st.session_state.get(f"d_{current_party}")
+                  desc_val = st.session_state.get(f"desc_{current_party}", "")
+                  
+                  # Inputs
+                  q_curr = st.session_state.get(f"q_{current_party}", 0)
+                  r_curr = st.session_state.get(f"r_{current_party}", 0.0)
+                  disc_curr = st.session_state.get(f"disc_{current_party}", 0.0)
+                  bill_amt = st.session_state.get(f"bill_{current_party}", 0.0)
+                  cash_amt = st.session_state.get(f"cash_{current_party}", 0.0)
+                  
+                  entries_added = 0
+                  
+                  # 1. Process BILL (Debit)
+                  if bill_amt > 0:
+                      bill_desc = desc_val if desc_val else "Bill"
+                      # REMOVED: Redundant (qty x rate) string since we have columns now
+                      
+                      db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                      entries_added += 1
+                      
+                  # 2. Process CASH RECEIVED (Credit)
+                  if cash_amt > 0:
+                      cash_desc = "Cash Received"
+                      # If both added, maybe clarify description
+                      if bill_amt > 0 and desc_val:
+                           cash_desc = f"Payment for: {desc_val}"
+                      elif desc_val:
+                           cash_desc = desc_val
+                           
+                      db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0)
+                      entries_added += 1
+                  
+                  if entries_added > 0:
+                      st.session_state['tx_msg'] = ('success', "Transaction Recorded Successfully!")
+                      # Reset Inputs
+                      st.session_state[f"q_{current_party}"] = 0
+                      st.session_state[f"r_{current_party}"] = 0.0
+                      st.session_state[f"disc_{current_party}"] = 0.0
+                      st.session_state[f"bill_{current_party}"] = 0.0
+                      st.session_state[f"cash_{current_party}"] = 0.0
+                      st.session_state[f"desc_{current_party}"] = ""
+                  else:
+                      st.session_state['tx_msg'] = ('error', "Please enter a Bill Amount or Cash Received.")
+
              # Helper for auto-calculation
              def update_calc():
                  q = st.session_state.get(f"q_{current_party}", 0)
                  r = st.session_state.get(f"r_{current_party}", 0.0)
-                 st.session_state[f"a_{current_party}"] = q * r
+                 disc = st.session_state.get(f"disc_{current_party}", 0.0)
+                 # Only update bill if q or r are positive
+                 if q > 0 or r > 0:
+                     st.session_state[f"bill_{current_party}"] = max(0.0, (q * r) - disc)
 
-             # Callback to handle transaction addition safely
-             def add_transaction_callback():
-                  q_curr = st.session_state.get(f"q_{current_party}", 0)
-                  r_curr = st.session_state.get(f"r_{current_party}", 0.0)
-                  a_curr = st.session_state.get(f"a_{current_party}", 0.0)
-                  
-                  # Get other values (now using keys)
-                  d_val = st.session_state.get(f"d_{current_party}")
-                  desc_val = st.session_state.get(f"desc_{current_party}", "Cash Received")
-                  type_val = st.session_state.get(f"type_{current_party}", "Credit (Receive Payment)")
-                  
-                  if a_curr > 0:
-                      debit = a_curr if "Debit" in type_val else 0.0
-                      credit = a_curr if "Credit" in type_val else 0.0
-                      
-                      # Append Qty Info to description if used
-                      if q_curr > 0:
-                          desc_val = f"{desc_val} ({q_curr} x {r_curr})"
-                      
-                      db.add_ledger_entry(current_party, desc_val, debit, credit, d_val)
-                      st.session_state['tx_msg'] = ('success', "Entry Added!")
-                      
-                      # Reset Calculator Inputs
-                      st.session_state[f"q_{current_party}"] = 0
-                      st.session_state[f"r_{current_party}"] = 0.0
-                      st.session_state[f"a_{current_party}"] = 0.0
-                  else:
-                      st.session_state['tx_msg'] = ('error', "Amount must be greater than 0")
+             # 1. Row 1: Qty & Rate & Discount
+             c1, c2, c3 = st.columns(3)
+             c1.number_input("Quantity (Optional)", min_value=0, step=1, key=f"q_{current_party}", on_change=update_calc)
+             c2.number_input("Rate / Price per Item", min_value=0.0, step=10.0, key=f"r_{current_party}", on_change=update_calc)
+             c3.number_input("Discount", min_value=0.0, step=10.0, key=f"disc_{current_party}", on_change=update_calc)
+             
+             # 2. Row 2: Bill & Cash
+             c4, c5 = st.columns(2)
+             c4.number_input("Values for Total Bill (Debit)", min_value=0.0, step=100.0, key=f"bill_{current_party}")
+             c5.number_input("Cash Received (Credit)", min_value=0.0, step=100.0, key=f"cash_{current_party}")
 
-             # 1. Calculator Inputs
-             cal1, cal2 = st.columns(2)
-             cal1.number_input("Quantity (Optional)", min_value=0, step=1, key=f"q_{current_party}", on_change=update_calc)
-             cal2.number_input("Rate / Price per Item", min_value=0.0, step=10.0, key=f"r_{current_party}", on_change=update_calc)
+             # 3. Row 3: Meta
+             c6, c7 = st.columns([1, 2])
+             c6.date_input("Date", key=f"d_{current_party}")
+             c7.text_input("Description (e.g. Item Name)", key=f"desc_{current_party}")
              
-             st.caption("Enter Quantity & Rate to auto-calculate Amount, or enter Amount manually below.")
-
-             # 2. Transaction Details
-             dc1, dc2, dc3, dc4 = st.columns([1, 2, 2, 1.5])
-             dc1.date_input("Date", key=f"d_{current_party}")
-             dc2.text_input("Description", value="Cash Received", key=f"desc_{current_party}")
-             dc3.radio("Type", ["Credit (Receive Payment)", "Debit (Add Bill)"], horizontal=True, key=f"type_{current_party}")
-             
-             # Amount (Auto-updated via key)
-             dc4.number_input("Amount", min_value=0.0, step=100.0, key=f"a_{current_party}")
-             
-             st.button("Add Entry", type="primary", on_click=add_transaction_callback)
+             st.button("Save Transaction", type="primary", on_click=add_transaction_callback)
 
              # Display Message from callback
              if 'tx_msg' in st.session_state:
@@ -1820,14 +2354,18 @@ elif menu == "👥 Partners & Ledger":
             if 'id' not in ledger_df.columns:
                  ledger_df['id'] = range(len(ledger_df)) # Fallback
             
-            display_df = ledger_df[['id', 'date', 'description', 'debit', 'credit', 'Balance']].copy()
+            # Update View Columns
+            display_df = ledger_df[['id', 'date', 'description', 'quantity', 'rate', 'discount', 'debit', 'credit', 'Balance']].copy()
             
             st.dataframe(display_df, use_container_width=True, height=400, 
                          column_config={
                              "id": st.column_config.TextColumn("ID", width="small"),
-                             "debit": st.column_config.NumberColumn("Debit (Bill)", format="Rs. %.0f"),
-                             "credit": st.column_config.NumberColumn("Credit (Paid)", format="Rs. %.0f"),
-                             "Balance": st.column_config.NumberColumn("Balance", format="Rs. %.0f"),
+                             "quantity": st.column_config.NumberColumn("Qty", format="%d"),
+                             "rate": st.column_config.NumberColumn("Price", format="Rs. %.0f"),
+                             "discount": st.column_config.NumberColumn("Discount", format="Rs. %.0f"),
+                             "debit": st.column_config.NumberColumn("Total Bill (Debit)", format="Rs. %.0f"),
+                             "credit": st.column_config.NumberColumn("Cash Recieved (Credit)", format="Rs. %.0f"),
+                             "Balance": st.column_config.NumberColumn("Outstanding Balance", format="Rs. %.0f"),
                          })
             
             # Delete Section

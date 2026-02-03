@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import json
 from datetime import datetime
 import time
 import random
@@ -198,7 +199,7 @@ class DatabaseManager:
         # Schema
         columns = ["id", "client_name", "inverter_model", "issue", "status", "phone_number", 
                    "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", "parts_data",
-                   "assigned_to", "start_date", "due_date", "completion_date", "is_late"]
+                   "labor_data", "assigned_to", "start_date", "due_date", "completion_date", "is_late"]
         
         if df.empty:
             df = pd.DataFrame(columns=columns)
@@ -224,6 +225,7 @@ class DatabaseManager:
             "total_cost": 0.0,
             "used_parts": "",
             "parts_data": "[]", # JSON string
+            "labor_data": "[]", # JSON string for multiple labor items
             "assigned_to": assigned_to,
             "start_date": start_date,
             "due_date": due_date,
@@ -238,7 +240,7 @@ class DatabaseManager:
         df = self._read_data("Repairs")
         if df.empty:
              return pd.DataFrame(columns=["id", "client_name", "inverter_model", "issue", "status", "phone_number", 
-                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", "parts_data",
+                   "created_at", "service_cost", "parts_cost", "total_cost", "used_parts", "parts_data", "labor_data",
                    "assigned_to", "start_date", "due_date", "completion_date", "is_late"])
         
         # Sort by created_at desc
@@ -258,7 +260,7 @@ class DatabaseManager:
              return df
         return df[df['status'] != 'Delivered']
 
-    def close_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json="[]"):
+    def close_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json="[]", labor_data_json="[]"):
         """
         Closes the job: Updates costs, sets status to Delivered, checks lateness, sets completion date.
         """
@@ -292,15 +294,33 @@ class DatabaseManager:
         df.at[idx, 'total_cost'] = float(total_cost)
         df.at[idx, 'used_parts'] = used_parts_str
         df.at[idx, 'parts_data'] = parts_data_json
+        df.at[idx, 'labor_data'] = labor_data_json
         df.at[idx, 'status'] = 'Delivered'
         df.at[idx, 'is_late'] = is_late
         df.at[idx, 'completion_date'] = str(completion_date)
 
         self._write_data("Repairs", df)
 
-        # 1.1 Add to Ledger
+        # 1.1 Add to Ledger (Client)
         desc = f"Repair Job #{repair_id} - {model}"
         self.add_ledger_entry(client_name, desc, total_cost, 0.0, completion_date)
+        
+        # 1.2 Credit Employees (Labor Split)
+        try:
+            labor_items = json.loads(labor_data_json)
+            for item in labor_items:
+                tech = item.get('technician')
+                cost = float(item.get('cost', 0.0))
+                desc_text = item.get('description', 'Labor')
+                
+                if tech and cost > 0:
+                     # Add to employee ledger
+                     # employee_name, date_val, entry_type, description, earned, paid
+                     # Use completion_date
+                     self.add_employee_ledger_entry(tech, completion_date, "Work Log", 
+                                                    f"Job #{repair_id} - {desc_text}", cost, 0.0)
+        except Exception as e:
+            print(f"Error parsing labor data for ledger: {e}")
 
         # 2. Deduct Stock
         inv_df = self._read_data("Inventory")
@@ -318,9 +338,9 @@ class DatabaseManager:
             
             self._write_data("Inventory", inv_df)
 
-    def update_repair_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, new_status="Repaired", parts_data_json="[]"):
+    def update_repair_job(self, repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, new_status="Repaired", parts_data_json="[]", labor_data_json="[]"):
         if new_status == "Delivered":
-            return self.close_job(repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json)
+            return self.close_job(repair_id, service_cost, parts_cost, total_cost, used_parts_str, parts_list, parts_data_json, labor_data_json)
             
         df = self._read_data("Repairs")
         if df.empty: return
@@ -334,6 +354,7 @@ class DatabaseManager:
         df.at[idx, 'total_cost'] = float(total_cost)
         df.at[idx, 'used_parts'] = used_parts_str
         df.at[idx, 'parts_data'] = parts_data_json
+        df.at[idx, 'labor_data'] = labor_data_json
         df.at[idx, 'status'] = new_status
         
         self._write_data("Repairs", df)
@@ -634,9 +655,9 @@ class DatabaseManager:
         return pd.DataFrame({'parts': [parts], 'service': [service]})
 
     # --- Ledger Methods ---
-    def add_ledger_entry(self, party_name, description, debit, credit, date_val=None):
+    def add_ledger_entry(self, party_name, description, debit, credit, date_val=None, quantity=0, rate=0.0, discount=0.0):
         df = self._read_data("Ledger")
-        columns = ["id", "party_name", "date", "description", "debit", "credit"]
+        columns = ["id", "party_name", "date", "description", "debit", "credit", "quantity", "rate", "discount"]
         if df.empty:
             df = pd.DataFrame(columns=columns)
             
@@ -652,7 +673,10 @@ class DatabaseManager:
             "date": date_val,
             "description": description,
             "debit": float(debit),
-            "credit": float(credit)
+            "credit": float(credit),
+            "quantity": int(quantity) if quantity else 0,
+            "rate": float(rate) if rate else 0.0,
+            "discount": float(discount) if discount else 0.0
         }])
         
         updated_df = pd.concat([df, new_row], ignore_index=True)
@@ -666,12 +690,20 @@ class DatabaseManager:
             party_ledger = df[df['party_name'] == party_name].copy()
             # Convert to View Schema
             try:
-                party_ledger = party_ledger[['id', 'date', 'description', 'debit', 'credit']]
+                # Ensure columns exist if reading old data
+                if 'quantity' not in party_ledger.columns:
+                    party_ledger['quantity'] = 0
+                if 'rate' not in party_ledger.columns:
+                    party_ledger['rate'] = 0.0
+                if 'discount' not in party_ledger.columns:
+                    party_ledger['discount'] = 0.0
+                    
+                party_ledger = party_ledger[['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount']]
             except KeyError:
                 # Fallback if columns missing
-                 party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit'])
+                 party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
         else:
-            party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit'])
+            party_ledger = pd.DataFrame(columns=['id', 'date', 'description', 'debit', 'credit', 'quantity', 'rate', 'discount'])
             
         # Fetch Opening Balance from Customers
         cust_df = self._read_data("Customers")
@@ -699,7 +731,10 @@ class DatabaseManager:
                 "date": "Old Khata", 
                 "description": "Opening Balance (B/F)",
                 "debit": debit,
-                "credit": credit
+                "credit": credit,
+                "quantity": 0,
+                "rate": 0.0,
+                "discount": 0.0
             }])
             
             # Combine: Opening Balance First
