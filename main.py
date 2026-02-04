@@ -191,6 +191,7 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     def get_val_or_line(val, line_len=20):
         # Convert to string and strip
         s_val = str(val).strip() if pd.notna(val) else ""
+        if s_val.endswith(".0"): s_val = s_val[:-2] # Remove decimal from IDs/Phones
         if s_val.lower() == "nan" or s_val == "":
             return "_" * line_len
         return s_val
@@ -251,24 +252,25 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(20, 6, "Mobile #:", 0, 0)
     pdf.set_font("Arial", size=10)
-    pdf.cell(0, 6, str(c_phone), 0, 1)
+    pdf.cell(0, 6, str(c_phone), 'B', 1)
     
     pdf.ln(5)
     
     # --- TABLE HEADER ---
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 9)
-    # Adjusted Columns for Discount
-    # S#(8), Date(20), Item(47), Qty(12), Bill(25), Disc(18), Cash(25), Bal(30) => 185 (Fine for A4)
+    # Adjusted Columns for Discount & Rate
+    # S#(8), Date(18), Item(45), Qty(10), Rate(18), Bill(23), Disc(15), Cash(23), Bal(28) => 188mm (Fine for A4)
     
     pdf.cell(8, 8, "S#", 1, 0, 'C', 1)
-    pdf.cell(20, 8, "Date", 1, 0, 'C', 1)
-    pdf.cell(47, 8, "Item / Description", 1, 0, 'C', 1)
-    pdf.cell(12, 8, "Qty", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Total Bill", 1, 0, 'C', 1)
-    pdf.cell(18, 8, "Discount", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Cash Rec.", 1, 0, 'C', 1)
-    pdf.cell(30, 8, "Rem. Balance", 1, 1, 'C', 1)
+    pdf.cell(18, 8, "Date", 1, 0, 'C', 1)
+    pdf.cell(45, 8, "Item / Description", 1, 0, 'C', 1)
+    pdf.cell(10, 8, "Qty", 1, 0, 'C', 1)
+    pdf.cell(18, 8, "Rate", 1, 0, 'C', 1)
+    pdf.cell(23, 8, "Total Bill", 1, 0, 'C', 1)
+    pdf.cell(15, 8, "Discount", 1, 0, 'C', 1)
+    pdf.cell(23, 8, "Cash Rec.", 1, 0, 'C', 1)
+    pdf.cell(28, 8, "Rem. Balance", 1, 1, 'C', 1)
     
     # --- TABLE ROWS ---
     pdf.set_font("Arial", size=8)
@@ -278,17 +280,22 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
         d_str = str(row['date'])
         
         pdf.cell(8, 6, str(idx_counter), 1, 0, 'C')
-        pdf.cell(20, 6, d_str, 1, 0, 'C')
+        pdf.cell(18, 6, d_str, 1, 0, 'C')
         
         # Truncate Desc
         desc_text = str(row['description'])
-        if len(desc_text) > 30: desc_text = desc_text[:28] + ".."
-        pdf.cell(47, 6, desc_text, 1, 0, 'L')
+        if len(desc_text) > 25: desc_text = desc_text[:23] + ".."
+        pdf.cell(45, 6, desc_text, 1, 0, 'L')
         
         # Quantity
         qty_val = row.get('quantity', 0)
         qty_str = str(int(qty_val)) if pd.notna(qty_val) and qty_val != 0 else "-"
-        pdf.cell(12, 6, qty_str, 1, 0, 'C')
+        pdf.cell(10, 6, qty_str, 1, 0, 'C')
+
+        # Rate
+        rate_val = row.get('rate', 0.0)
+        rate_str = f"{rate_val:,.0f}" if pd.notna(rate_val) and rate_val != 0 else "-"
+        pdf.cell(18, 6, rate_str, 1, 0, 'R')
         
         # Numbers
         debit_val = row['debit']
@@ -296,10 +303,10 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
         credit_val = row['credit']
         bal_val = row['Balance'] 
         
-        pdf.cell(25, 6, f"{debit_val:,.0f}" if debit_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(18, 6, f"{discount_val:,.0f}" if discount_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(25, 6, f"{credit_val:,.0f}" if credit_val!=0 else "-", 1, 0, 'R')
-        pdf.cell(30, 6, f"{bal_val:,.0f}", 1, 1, 'R')
+        pdf.cell(23, 6, f"{debit_val:,.0f}" if debit_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(15, 6, f"{discount_val:,.0f}" if discount_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(23, 6, f"{credit_val:,.0f}" if credit_val!=0 else "-", 1, 0, 'R')
+        pdf.cell(28, 6, f"{bal_val:,.0f}", 1, 1, 'R')
         
         idx_counter += 1
         
