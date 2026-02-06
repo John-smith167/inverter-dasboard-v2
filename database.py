@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import random
 from streamlit_gsheets import GSheetsConnection
@@ -626,6 +626,18 @@ class DatabaseManager:
             return matches.iloc[-1]['debit']
         return 0.0
 
+    def get_cash_received_for_invoice(self, invoice_id):
+        """Try to fetch the cash received amount specific to an invoice."""
+        ledger = self._read_data("Ledger")
+        if ledger.empty: return 0.0
+        
+        # Look for description containing "Cash Payment for Inv #{invoice_id}"
+        matches = ledger[ledger['description'].astype(str).str.contains(f"Cash Payment for Inv #{invoice_id}", regex=False)]
+        
+        if not matches.empty:
+            return matches['credit'].sum()
+        return 0.0
+
     def get_revenue_analytics(self):
         repairs = self._read_data("Repairs")
         if repairs.empty: return 0.0, 0.0
@@ -1053,72 +1065,93 @@ class DatabaseManager:
         Returns Customer Balances sorted by Highest Outstanding.
         Includes calculated columns: Total Sales, Total Paid, Net Outstanding.
         Also includes counts for: Inverter, Charger, Kit, Other (based on sales description).
+        NOW INCLUDES: Deleted Customers (Active in Ledger but missing from Directory).
         """
-        # 1. Get all customers
-        customers = self.get_all_customers()
-        if customers.empty:
-            return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
-                                       "inverter_count", "charger_count", "kit_count", "other_count"])
-            
+        # 1. Get all customers (Directory)
+        customers_df = self.get_all_customers()
+        
         # 2. Get Ledger for all
         ledger = self._read_data("Ledger")
+        if ledger.empty:
+            if customers_df.empty:
+                 return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
+                                       "inverter_count", "charger_count", "kit_count", "other_count"])
+        
+        # 3. Identify ALL Parties (Directory + Ledger)
+        ledger_parties = ledger['party_name'].unique() if not ledger.empty else []
+        directory_parties = customers_df['name'].unique() if not customers_df.empty else []
+        
+        all_parties = set(list(ledger_parties) + list(directory_parties))
         
         results = []
-        for _, cust in customers.iterrows():
-            c_name = cust['name']
-            c_open = float(cust['opening_balance']) if pd.notnull(cust['opening_balance']) else 0.0
+        
+        for p_name in all_parties:
+            # Check if in Directory
+            cust_info = {}
+            if not customers_df.empty:
+                match = customers_df[customers_df['name'] == p_name]
+                if not match.empty:
+                    cust_info = match.iloc[0].to_dict()
             
-            # Initialize Counts
+            # Defaults
+            c_city = cust_info.get('city', 'Unknown')
+            c_phone = cust_info.get('phone', 'N/A')
+            c_open = float(cust_info.get('opening_balance', 0.0))
+            is_deleted = False
+            
+            if not cust_info:
+                # Ghost Client (Deleted)
+                c_city = "(Deleted)"
+                is_deleted = True
+            
+            # --- LEDGER CALCULATIONS ---
+            total_sales = 0.0
+            total_paid = 0.0
             inv_c = 0
             chg_c = 0
             kit_c = 0
             oth_c = 0
             
-            # Filter ledger for this customer
             if not ledger.empty:
-                cust_ledger = ledger[ledger['party_name'] == c_name]
+                cust_ledger = ledger[ledger['party_name'] == p_name]
                 
-                # Calculate Totals
-                total_sales = cust_ledger[cust_ledger['debit'] > 0]['debit'].sum()
-                total_paid = cust_ledger[cust_ledger['credit'] > 0]['credit'].sum()
-                
-                # Net
-                net = total_sales - total_paid + c_open
-                
-                # Calculate Item Counts from Debits (Sales)
-                sales_txns = cust_ledger[cust_ledger['debit'] > 0]
-                for _, row in sales_txns.iterrows():
-                    desc = str(row['description']).lower()
+                if not cust_ledger.empty:
+                    # Calculate Totals
+                    total_sales = cust_ledger[cust_ledger['debit'] > 0]['debit'].sum()
+                    total_paid = cust_ledger[cust_ledger['credit'] > 0]['credit'].sum()
                     
-                    # Logic: Check keywords. If multiple match, we might count just one or all? 
-                    # User said: "write 'Inverter'... automatically be added to total Inverter count"
-                    # Assumption: One category per transaction primarily, or count all matches?
-                    # "If we write 'Charger', it should be added to total Charger"
-                    # Let's count occurrence. If description is "Inverter and Charger", count both?
-                    # Or classify the transaction? "automatically be added to the total Inverter count for that customer"
-                    # Let's simple check:
-                    
-                    matched = False
-                    if "inverter" in desc:
-                        inv_c += 1
-                        matched = True
-                    if "charger" in desc:
-                        chg_c += 1
-                        matched = True
-                    if "kit" in desc:
-                        kit_c += 1
-                        matched = True
-                        
-                    # If NONE of the above, it's Other.
-                    # Be careful: "Misc Wire" -> Other.
-                    if not matched:
-                        oth_c += 1
+                    # Calculate Item Counts from Debits
+                    sales_txns = cust_ledger[cust_ledger['debit'] > 0]
+                    for _, row in sales_txns.iterrows():
+                        desc = str(row['description']).lower()
+                        matched = False
+                        if "inverter" in desc:
+                            inv_c += 1
+                            matched = True
+                        if "charger" in desc:
+                            chg_c += 1
+                            matched = True
+                        if "kit" in desc:
+                            kit_c += 1
+                            matched = True
+                        if not matched:
+                            oth_c += 1
+            
+            # Net Outstanding
+            net = total_sales - total_paid + c_open
+            
+            # Only include if:
+            # 1. In Directory (Active)
+            # 2. OR Has Outstanding Balance (Deleted but owes money)
+            if not is_deleted or (is_deleted and abs(net) > 0):
+                # Add status tag to name if deleted
+                display_name = p_name if not is_deleted else f"{p_name} ❌"
                 
                 results.append({
-                    "customer_id": cust['customer_id'],
-                    "name": c_name,
-                    "city": cust['city'],
-                    "phone": cust['phone'],
+                    "customer_id": cust_info.get('customer_id', 'N/A'),
+                    "name": display_name,
+                    "city": c_city,
+                    "phone": c_phone,
                     "total_sales": total_sales,
                     "total_paid": total_paid,
                     "opening_balance": c_open,
@@ -1128,22 +1161,55 @@ class DatabaseManager:
                     "kit_count": kit_c,
                     "other_count": oth_c
                 })
-            else:
-                 # No ledger, just opening
-                 results.append({
-                    "customer_id": cust['customer_id'],
-                    "name": c_name,
-                    "city": cust['city'],
-                    "phone": cust['phone'],
-                    "total_sales": 0.0,
-                    "total_paid": 0.0,
-                    "opening_balance": c_open,
-                    "net_outstanding": c_open,
-                    "inverter_count": 0,
-                    "charger_count": 0,
-                    "kit_count": 0,
-                    "other_count": 0
-                })
+                
+        if not results:
+             return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
+                                       "inverter_count", "charger_count", "kit_count", "other_count"])
+             
+        df_res = pd.DataFrame(results)
+        # Sort by Net Outstanding (descending)
+        return df_res.sort_values(by='net_outstanding', ascending=False)
+
+    def get_monthly_expenses_breakdown(self):
+        """
+        Get expenses for the current month grouped by category.
+        """
+        df = self._read_data("Expenses")
+        if df.empty:
+            return pd.DataFrame(columns=['category', 'amount'])
+            
+        # Filter Current Month
+        current_month = datetime.now().strftime('%Y-%m')
+        # Ensure date column is string and slice
+        df['month'] = df['date'].astype(str).str.slice(0, 7)
+        return df[df['month'] == current_month].groupby('category')['amount'].sum().reset_index()
+
+    def get_sales_trend(self, days=30):
+        """
+        Get daily sales total for the last N days.
+        """
+        sales = self._read_data("Sales")
+        if sales.empty:
+            return pd.DataFrame(columns=['sale_date', 'total_amount'])
+            
+        # Convert date
+        try:
+             # Handle datetime string format "YYYY-MM-DD HH:MM:SS" -> "YYYY-MM-DD"
+             sales['date_only'] = pd.to_datetime(sales['sale_date']).dt.date
+        except:
+             return pd.DataFrame(columns=['sale_date', 'total_amount'])
+             
+        # Filter last N days
+        cutoff = datetime.now().date() - timedelta(days=days)
+        recent_sales = sales[sales['date_only'] >= cutoff]
+        
+        if recent_sales.empty:
+             return pd.DataFrame(columns=['sale_date', 'total_amount'])
+             
+        trend = recent_sales.groupby('date_only')['total_amount'].sum().reset_index()
+        trend.columns = ['sale_date', 'total_amount']
+        return trend.sort_values('sale_date')
+
                 
         if not results:
              return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding",

@@ -497,23 +497,27 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf = FPDF()
     pdf.add_page()
     
+    # Determine if this is a Payment Receipt (Cash only, no billable items)
+    is_receipt = (grand_total == 0 and cash_received > 0)
+    
     # --- HEADER ---
     pdf.set_font("Arial", 'B', 20)
     pdf.set_y(10)
-    # Right align company info approximately or Center
     pdf.cell(0, 8, txt="SK INVERTX TRADERS", ln=True, align='C')
     
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 5, txt="Near SSD Lawn, National Bank, Devri Road, Ghotki", ln=True, align='C')
     pdf.cell(0, 5, txt="Prop: Suresh Kumar | Mobile: 0310-1757750, 0315-1757752", ln=True, align='C')
     
-    # Logo Overlap check
     if os.path.exists("logo.png"):
         pdf.image("logo.png", 10, 8, 30)
 
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 8, txt="Sales Invoice", ln=True, align='C')
+    
+    title_text = "Payment Receipt" if is_receipt else "Sales Invoice"
+    pdf.cell(0, 8, txt=title_text, ln=True, align='C')
+    
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(5)
 
@@ -521,13 +525,13 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     
     # Invoice No & Date
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Invoice #", 0, 0)
+    pdf.cell(20, 6, "Ref #:" if is_receipt else "Invoice #:", 0, 0)
     pdf.set_font("Arial", size=10)
     pdf.cell(40, 6, str(invoice_no), 0, 0)
     
     pdf.set_x(140)
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Bill Date :", 0, 0)
+    pdf.cell(20, 6, "Date :", 0, 0)
     pdf.set_font("Arial", size=10)
     pdf.cell(30, 6, str(date_val), 0, 1)
     
@@ -543,38 +547,44 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.ln(5)
 
     # --- TABLE HEADER ---
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 10)
-    
-    # Widths: S#(10), Item(80), Quantity(15), Rate(25), Disc(20), Net Amount(40) => 190
-    pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
-    pdf.cell(80, 8, "Item Description", 1, 0, 'C', 1)
-    pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
-    pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
-    pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
-    pdf.cell(40, 8, "Net Amount", 1, 1, 'C', 1)
+    if not is_receipt:
+        pdf.set_fill_color(240, 240, 240)
+        pdf.set_font("Arial", 'B', 10)
+        
+        pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
+        pdf.cell(80, 8, "Item Description", 1, 0, 'C', 1)
+        pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
+        pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
+        pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
+        pdf.cell(40, 8, "Net Amount", 1, 1, 'C', 1)
 
-    # --- TABLE ROWS ---
-    pdf.set_font("Arial", size=9)
-    idx = 1
-    for _, row in items_df.iterrows():
-        item_name = str(row['Item Name'])[:45]
-        qty = float(row['Qty'])
-        ret = float(row.get('Return Qty', 0))
-        net_qty = qty - ret
-        rate = float(row['Rate'])
-        discount = float(row.get('Discount', 0))
-        total = float(row['Total'])
-        
-        pdf.cell(10, 8, str(idx), 1, 0, 'C')
-        pdf.cell(80, 8, item_name, 1, 0, 'L')
-        pdf.cell(15, 8, f"{net_qty:g}", 1, 0, 'C')
-        pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
-        pdf.cell(20, 8, f"{discount:g}", 1, 0, 'R')
-        pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
-        idx += 1
-        
-    pdf.ln(2)
+        # --- TABLE ROWS ---
+        pdf.set_font("Arial", size=9)
+        idx = 1
+        for _, row in items_df.iterrows():
+            item_name = str(row['Item Name'])[:45]
+            qty = float(row['Qty'])
+            ret = float(row.get('Return Qty', 0))
+            net_qty = qty - ret
+            rate = float(row['Rate'])
+            discount = float(row.get('Discount', 0))
+            total = float(row['Total'])
+            
+            pdf.cell(10, 8, str(idx), 1, 0, 'C')
+            pdf.cell(80, 8, item_name, 1, 0, 'L')
+            pdf.cell(15, 8, f"{net_qty:g}", 1, 0, 'C')
+            pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
+            pdf.cell(20, 8, f"{discount:g}", 1, 0, 'R')
+            pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
+            idx += 1
+            
+        pdf.ln(2)
+    else:
+        # Receipt View - Just show the main description
+        pdf.set_fill_color(245, 245, 245)
+        pdf.set_font("Arial", size=12)
+        pdf.multi_cell(0, 10, f"Received payment from {customer}.", border=1, align='C', fill=True)
+        pdf.ln(5)
 
     # --- SUMMARY SECTION ---
     y_before_totals = pdf.get_y()
@@ -584,30 +594,34 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_x(110)
     pdf.set_font("Arial", 'B', 10)
     
-    pdf.cell(45, 7, "Total:", 0, 0, 'R')
-    pdf.cell(35, 7, f"{subtotal:,.2f}", 1, 1, 'R')
-    
-    if freight > 0 or misc > 0:
-        extras = freight + misc
-        pdf.cell(45, 7, "Freight/Labor:", 0, 0, 'R')
-        pdf.cell(35, 7, f"{extras:,.2f}", 1, 1, 'R')
+    if not is_receipt:
+        pdf.cell(45, 7, "Total:", 0, 0, 'R')
+        pdf.cell(35, 7, f"{subtotal:,.2f}", 1, 1, 'R')
+        
+        if freight > 0 or misc > 0:
+            extras = freight + misc
+            pdf.cell(45, 7, "Freight/Labor:", 0, 0, 'R')
+            pdf.cell(35, 7, f"{extras:,.2f}", 1, 1, 'R')
 
-    pdf.cell(45, 7, "Bill Total:", 0, 0, 'R')
-    pdf.cell(35, 7, f"{grand_total:,.2f}", 1, 1, 'R')
+        pdf.cell(45, 7, "Bill Total:", 0, 0, 'R')
+        pdf.cell(35, 7, f"{grand_total:,.2f}", 1, 1, 'R')
 
     if cash_received > 0:
-        pdf.cell(45, 7, "Cash Received:", 0, 0, 'R')
-        pdf.cell(35, 7, f"{cash_received:,.2f}", 1, 1, 'R')
+        pdf.set_fill_color(230, 255, 230)
+        pdf.cell(45, 7, "Cash Received:", 0, 0, 'R', is_receipt)
+        pdf.cell(35, 7, f"{cash_received:,.2f}", 1, 1, 'R', is_receipt)
     
-    current_bill_bal = grand_total - cash_received
-    pdf.cell(45, 7, "Bill Balance:", 0, 0, 'R')
-    pdf.cell(35, 7, f"{current_bill_bal:,.2f}", 1, 1, 'R')
+    if not is_receipt:
+        current_bill_bal = grand_total - cash_received
+        pdf.cell(45, 7, "Bill Balance:", 0, 0, 'R')
+        pdf.cell(35, 7, f"{current_bill_bal:,.2f}", 1, 1, 'R')
     
     pdf.cell(45, 7, "Previous Balance:", 0, 0, 'R')
     pdf.cell(35, 7, f"{previous_balance:,.2f}", 1, 1, 'R')
     
-    pdf.cell(45, 7, "Outstanding Balance:", 0, 0, 'R')
-    pdf.cell(35, 7, f"{outstanding_balance:,.2f}", 1, 1, 'R')
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(45, 8, "Outstanding Balance:", 0, 0, 'R')
+    pdf.cell(35, 8, f"{outstanding_balance:,.2f}", 1, 1, 'R')
     
     y_after_totals = pdf.get_y()
     
@@ -615,17 +629,23 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_left_margin(10)
     pdf.set_y(y_before_totals)
     
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Remarks:", 0, 1)
-    pdf.set_font("Arial", size=9)
-    pdf.multi_cell(90, 5, "Warranty claims as per company policy. No return/change without invoice.", border=1)
+    if not is_receipt:
+        pdf.set_font("Arial", 'B', 10)
+        pdf.cell(20, 6, "Remarks:", 0, 1)
+        pdf.set_font("Arial", size=9)
+        pdf.multi_cell(90, 5, "Warranty claims as per company policy. No return/change without invoice.", border=1)
+    else:
+        pdf.set_font("Arial", 'I', 9)
+        pdf.cell(90, 6, "Thank you for your payment.", 0, 1)
     
     pdf.set_y(max(y_after_totals, pdf.get_y()) + 5)
     
-    # Amount In Words
+    # Amount In Words helps validation
+    amount_to_word = cash_received if is_receipt else grand_total
+    
     pdf.set_font("Arial", 'B', 10)
     try:
-        words = num_to_words(int(grand_total))
+        words = num_to_words(int(amount_to_word))
         word_str = f"{words} Rupees Only"
     except:
         word_str = "________________________________"
@@ -759,8 +779,14 @@ def create_recovery_list_pdf(recovery_df, grand_total):
     # Rows
     pdf.set_font("Arial", size=8)
     for _, row in recovery_df.iterrows():
-        name = str(row['name'])[:28]
-        city = str(row['city'])[:15]
+        # Sanitize Name for Latin-1 (PDF) - Remove Emoji
+        raw_name = str(row['name'])
+        # Replace the specific cross mark if present
+        clean_name = raw_name.replace("❌", " (Deleted)")
+        # Ensure compatible with FPDF (Latin-1)
+        name = clean_name.encode('latin-1', 'replace').decode('latin-1')[:28]
+        
+        city = str(row['city']).encode('latin-1', 'replace').decode('latin-1')[:15]
         phone = str(row['phone'])
         
         pdf.cell(50, 8, name, 1)
@@ -783,7 +809,11 @@ def create_recovery_list_pdf(recovery_df, grand_total):
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(42, 10, f"Rs. {grand_total:,.2f}", 1, 1, 'R', 1)
     
-    return pdf.output(dest='S').encode('latin-1')
+    # Safe Encode for Output
+    try:
+        return pdf.output(dest='S').encode('latin-1', 'replace')
+    except Exception as e:
+        return pdf.output(dest='S').encode('latin-1', 'ignore')
 
 def render_stock_valuation_table(db_instance):
     st.header("📦 Detailed Stock Valuation")
@@ -1544,9 +1574,21 @@ if menu == "⚡ Quick Invoice":
                     # Filter out empty rows
                     valid_items = df_display[df_display['Item Name'].str.strip() != ""]
                     
-                    if valid_items.empty:
-                        st.error("Please add at least one item.")
+                    # Logic Change: Allow if Cash Received > 0 even if no items
+                    if valid_items.empty and cash_received == 0:
+                        st.error("Please add at least one item or enter Cash Received.")
                     else:
+                        # If Cash Only, create dummy item for record
+                        if valid_items.empty and cash_received > 0:
+                            valid_items = pd.DataFrame([{
+                                "Item Name": "Payment Received", 
+                                "Qty": 1, 
+                                "Rate": 0.0, 
+                                "Discount": 0.0, 
+                                "Return Qty": 0, 
+                                "Total": 0.0
+                            }])
+                        
                         # Save to DB
                         success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
                         
@@ -1631,6 +1673,9 @@ if menu == "⚡ Quick Invoice":
                  # Try to get Grand Total from Ledger to infer Freight/Misc
                  ledger_total = db.get_invoice_total_from_ledger(search_inv_input)
                  
+                 # Fetch Cash Received if any
+                 cash_received_h = db.get_cash_received_for_invoice(search_inv_input)
+                 
                  # Inferred Extras
                  diff = 0.0
                  if ledger_total > subtotal_h:
@@ -1643,31 +1688,45 @@ if menu == "⚡ Quick Invoice":
                      st.markdown(f"**Subtotal:** Rs. {subtotal_h:,.2f}")
                      if diff > 0:
                          st.markdown(f"**Freight/Misc:** Rs. {diff:,.2f}")
+                     
                      st.markdown(f"### Total: Rs. {ledger_total:,.0f}")
+                     
+                     if cash_received_h > 0:
+                         st.markdown(f"**Cash Received:** Rs. {cash_received_h:,.0f}")
                      
                      # Re-Print Button
                      if st.button("🖨️ Re-Print Invoice", key=f"reprint_{search_inv_input}", use_container_width=True):
                          # Generate PDF
-                         # We treat 'diff' as 'misc' for simplicity since we can't distinguish freight vs labor
-                         # Calculate Balances for History Reprint
-                         # We show Current Balance (Outstanding) and derive Previous
-                         led_h = db.get_ledger_entries(cust_name_h)
-                         cur_bal_h = 0.0
-                         if not led_h.empty:
-                             cur_bal_h = led_h['debit'].sum() - led_h['credit'].sum()
-                         prev_bal_h = cur_bal_h - ledger_total
+                         # We need balances for PDF
+                         led_entries = db.get_ledger_entries(cust_name_h)
+                         cur_bal_p = 0.0
+                         if not led_entries.empty:
+                            cur_bal_p = led_entries['debit'].sum() - led_entries['credit'].sum()
                          
-                         pdf_bytes_h = create_sales_invoice_pdf(
-                                search_inv_input, cust_name_h, str(date_h).split(' ')[0], 
-                                disp_ph, subtotal_h, 0.0, diff, ledger_total, prev_bal_h, cur_bal_h
-                            )
+                         # Prev Balance Approximation for Reprint
+                         # Prev = Current - (Billed - Cash)
+                         # If Billed is 0 (Receipt), Prev = Current + Cash
+                         # We must respect the historical context ideally, but for reprint we often show current snapshot 
+                         # OR we try to back-calculate. 
+                         # Let's use the standard formula: Prev = Current - GrandTotal + Cash
+                         prev_bal_p = cur_bal_p - ledger_total + cash_received_h
+                         
+                         pdf_bytes = create_sales_invoice_pdf(
+                             search_inv_input, cust_name_h, date_h, 
+                             items_df, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_received_h
+                         )
+                         
                          st.download_button(
-                                "📥 Download PDF", 
-                                data=pdf_bytes_h, 
-                                file_name=f"Invoice_{search_inv_input}.pdf", 
-                                mime="application/pdf", 
-                                use_container_width=True
-                            )
+                            "📥 Download PDF",
+                            data=pdf_bytes,
+                            file_name=f"Invoice_{search_inv_input}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                         )
+                     # Ends the first block above
+
+
              else:
                  st.info("No invoice found with that number. Please check the ID (e.g., INV-2026-001).")
 # --- TAB: ACCOUNTS LEDGER ---
@@ -2001,135 +2060,8 @@ elif menu == "📦 Product Inventory":
 # --- TAB: BUSINESS REPORTS ---
 elif menu == "📊 Business Reports":
     st.title("📊 Business Reports & Analytics")
-    
-    # --- SECTION A: DASHBOARD METRICS (From Old Dashboard) ---
-    st.subheader("🚀 Business Overview")
-    
-    # Calculate Metrics
-    active_repairs = db.get_active_repairs()
-    active_count = len(active_repairs)
-    
-    upcoming_count = 0
-    if not active_repairs.empty:
-        today = datetime.now().date()
-        for _, row in active_repairs.iterrows():
-             if row['due_date']:
-                 try:
-                     d = datetime.strptime(row['due_date'], '%Y-%m-%d').date()
-                     if 0 <= (d - today).days <= 2:
-                         upcoming_count += 1
-                 except: pass
 
-    inventory = db.get_inventory()
-    low_stock = len(inventory[inventory['quantity'] < 5]) if not inventory.empty else 0
-    
-    # REVENUE METRICS
-    total_rev, monthly_rev = db.get_revenue_analytics()
-    parts_labor_df = db.get_parts_vs_labor()
-    
-    m1, m2, m3 = st.columns([1,1,2])
-    with m1:
-        st.metric("💰 Total Revenue", f"Rs. {total_rev:,.0f}")
-    with m2:
-        st.metric("� This Month", f"Rs. {monthly_rev:,.0f}")
-    with m3:
-        if parts_labor_df['parts'][0] > 0 or parts_labor_df['service'][0] > 0:
-            pie_data = pd.DataFrame({
-                'Type': ['Parts', 'Labor'],
-                'Amount': [parts_labor_df['parts'][0], parts_labor_df['service'][0]]
-            })
-            fig_pie = px.pie(pie_data, values='Amount', names='Type', hole=0.6, color_discrete_sequence=['#ff9f43', '#54a0ff'], height=150)
-            fig_pie.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False, paper_bgcolor='rgba(0,0,0,0)')
-            st.plotly_chart(fig_pie, use_container_width=False)
-
-    st.markdown("---")
-    
-    # 3 KEY CARDS
-    kc1, kc2, kc3 = st.columns(3)
-    with kc1:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Active Repairs</div><div style="font-size:2.5rem; font-weight:bold; color:#7aa2f7;">{active_count}</div></div>""", unsafe_allow_html=True)
-    with kc2:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Upcoming Due (2 Days)</div><div style="font-size:2.5rem; font-weight:bold; color:#e0af68;">{upcoming_count}</div></div>""", unsafe_allow_html=True)
-    with kc3:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Low Stock Alerts</div><div style="font-size:2.5rem; font-weight:bold; color:#f7768e;">{low_stock}</div></div>""", unsafe_allow_html=True)
-    
-    st.markdown("---")
-
-    # --- SECTION B: STRATEGIC INSIGHTS (From Old Dashboard) ---
-    st.subheader("💡 Strategic Insights")
-    
-    history_df = db.get_job_history()
-    
-    if not history_df.empty:
-        col_bi1, col_bi2 = st.columns(2)
-        
-        # 1. Inventory Intelligence
-        with col_bi1:
-            st.markdown("#### 🔥 Top Selling Parts")
-            all_parts = []
-            for raw_parts in history_df['used_parts']:
-                if raw_parts and len(raw_parts) > 2:
-                    try:
-                        clean = raw_parts.replace("[","").replace("]","").replace("'","").replace('"',"")
-                        if clean:
-                            parts = [p.strip() for p in clean.split(',')]
-                            all_parts.extend(parts)
-                    except: pass
-            
-            if all_parts:
-                part_counts = pd.Series(all_parts).value_counts().reset_index()
-                part_counts.columns = ['Part Name', 'Qty Sold']
-                top_parts = part_counts.head(10)
-                
-                fig_inv = px.bar(
-                    top_parts, 
-                    x='Qty Sold', 
-                    y='Part Name', 
-                    orientation='h',
-                    title="",
-                    color='Qty Sold',
-                    color_continuous_scale='Magma'
-                )
-                st.plotly_chart(fig_inv, use_container_width=True)
-            else:
-                st.info("No parts data found in history.")
-
-        # 2. Repair Profitability Matrix
-        with col_bi2:
-            st.markdown("#### 💎 Profitability Matrix")
-            matrix = history_df.groupby('inverter_model').agg(
-                Volume=('id', 'count'),
-                Avg_Profit=('service_cost', 'mean'),
-                Total_Revenue=('total_cost', 'sum')
-            ).reset_index()
-            
-            if not matrix.empty:
-                mean_vol = matrix['Volume'].mean()
-                mean_prof = matrix['Avg_Profit'].mean()
-                
-                fig_mat = px.scatter(
-                    matrix,
-                    x='Volume',
-                    y='Avg_Profit',
-                    size='Total_Revenue',
-                    color='inverter_model',
-                    hover_name='inverter_model',
-                    title="",
-                    labels={'Volume': 'Number of Repairs', 'Avg_Profit': 'Avg Service Fee'}
-                )
-                fig_mat.add_hline(y=mean_prof, line_dash="dash", line_color="white", annotation_text="Avg Profit")
-                fig_mat.add_vline(x=mean_vol, line_dash="dash", line_color="white", annotation_text="Avg Vol")
-                fig_mat.update_layout(showlegend=False, height=300, margin=dict(t=0, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
-                st.plotly_chart(fig_mat, use_container_width=True)
-    
-    st.divider()
-    
-    st.divider()
-
-    # --- SECTION C: STOCK VALUATION REPORT (NEW) ---
-    render_stock_valuation_table(db)
-    
-    # --- SECTION D: FINANCIAL REPORTS ---
+    # --- SECTION A: DAILY CASH BOOK (Moved to Top) ---
     st.header("💵 Daily Cash Book")
     
     # Date Selector
@@ -2138,10 +2070,6 @@ elif menu == "📊 Business Reports":
     # Fetch Data
     cash_in, cash_out, net_cash = db.get_daily_cash_flow(report_date)
 
-    # 1. ADD AUTO CALCULATOR ROW FOR TOTAL EXPENSES
-    # We display it prominently even before the table if needed, or after.
-
-    
     # Display Metrics
     r_col1, r_col2, r_col3 = st.columns(3)
     with r_col1:
@@ -2178,60 +2106,134 @@ elif menu == "📊 Business Reports":
          # Total Amount (Auto Calculator)
          total_exp_day = expenses_df['amount'].sum()
          st.markdown(f"""<div style="text-align:right; font-size:1.2rem; font-weight:bold; margin-top:5px; padding:10px; background:#1a1c24; border-radius:8px;">Total Expenses: <span style="color:#f7768e">Rs. {total_exp_day:,.2f}</span></div>""", unsafe_allow_html=True)
-         
+    
     st.divider()
 
-    # Section 2: Customer Recovery List
+    # --- SECTION B: REPAIR CENTER OVERVIEW (New Design) ---
+    st.header("🔧 Repair Center Overview")
+    
+    # Filter Selection
+    filter_option = st.radio("Select Period", ["Today", "This Week", "This Month"], horizontal=True)
+    
+    # Calculate Metrics based on Filter
+    all_repairs = db.get_all_repairs()
+    
+    # Determine Date Range
+    now = datetime.now()
+    today = now.date()
+    start_filter_date = today
+    
+    if filter_option == "This Week":
+        start_filter_date = today - timedelta(days=today.weekday()) # Start of week (Monday)
+    elif filter_option == "This Month":
+        start_filter_date = date(today.year, today.month, 1) # Start of month
+    
+    # Metrics Variables
+    repairs_received = 0
+    repairs_delivered = 0
+    active_now = 0
+    
+    if not all_repairs.empty:
+        # Active Now (Status != Delivered) - Independent of time filter usually, but let's show CURRENT active
+        active_now = len(all_repairs[all_repairs['status'] != 'Delivered'])
+        
+        # Received (Compare start_date)
+        # Ensure start_date is date object
+        try:
+             # Vectorized conversion if possible, or loop
+             # Safe loop for small dataset
+             for _, row in all_repairs.iterrows():
+                 try:
+                     s_date = datetime.strptime(str(row['start_date']), '%Y-%m-%d').date()
+                     if s_date >= start_filter_date:
+                         repairs_received += 1
+                 except: pass
+                 
+                 if row['status'] == 'Delivered' and row['completion_date']:
+                     try:
+                         c_date = datetime.strptime(str(row['completion_date']), '%Y-%m-%d').date()
+                         if c_date >= start_filter_date:
+                             repairs_delivered += 1
+                     except: pass
+        except Exception as e:
+            pass
+
+    inventory = db.get_inventory()
+    low_stock_count = len(inventory[inventory['quantity'] < 5]) if not inventory.empty else 0
+
+    # Display Cards
+    rc1, rc2, rc3, rc4 = st.columns(4)
+    with rc1:
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Repairs Received</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">{repairs_received}</div><div class="sub-text" style="font-size:0.8rem;">{filter_option}</div></div>""", unsafe_allow_html=True)
+    with rc2:
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Repairs Delivered</div><div style="font-size:2rem; font-weight:bold; color:#9ece6a;">{repairs_delivered}</div><div class="sub-text" style="font-size:0.8rem;">{filter_option}</div></div>""", unsafe_allow_html=True)
+    with rc3:
+        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Active Now</div><div style="font-size:2rem; font-weight:bold; color:#e0af68;">{active_now}</div><div class="sub-text" style="font-size:0.8rem;">Live Count</div></div>""", unsafe_allow_html=True)
+    with rc4:
+         color_stk = "#f7768e" if low_stock_count > 0 else "#9ece6a"
+         st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Low Stock Alerts</div><div style="font-size:2rem; font-weight:bold; color:{color_stk};">{low_stock_count}</div><div class="sub-text" style="font-size:0.8rem;">Inventory</div></div>""", unsafe_allow_html=True)
+
+    st.divider()
+
+    # --- SECTION C: STOCK VALUATION (Prominent) ---
+    stock_value = db.get_inventory_valuation()
+    st.header(f"📦 Total Stock Value: :green[Rs. {stock_value:,.2f}]")
+    
+    with st.expander("📦 Detailed Stock Valuation Table", expanded=True):
+        render_stock_valuation_table(db)
+    
+    st.divider()
+
+    # --- SECTION D: CUSTOMER RECOVERY LIST ---
     st.header("📋 Customer Recovery List")
     
     recovery_df = db.get_customer_recovery_list()
     
     if not recovery_df.empty:
-        # 1. OVERALL TOTALS (Inverter, Charger, Kit, Other)
-        # Check if columns exist (safe-guard against old DB cache/schema issues if not refreshed)
+        # 1. Summaries
         if 'inverter_count' in recovery_df.columns:
             tot_inv = recovery_df['inverter_count'].sum()
             tot_chg = recovery_df['charger_count'].sum()
             tot_kit = recovery_df['kit_count'].sum()
             tot_oth = recovery_df['other_count'].sum()
             
-            # Display Summary
             st.markdown("#### 📊 Sold Items Summary (All Customers)")
             s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Inverters", int(tot_inv))
-            s2.metric("Chargers", int(tot_chg))
-            s3.metric("Kits", int(tot_kit))
-            s4.metric("Others", int(tot_oth))
+            s1.metric("Total Inverters", int(tot_inv))
+            s2.metric("Total Chargers", int(tot_chg))
+            s3.metric("Total Kits", int(tot_kit))
+            s4.metric("Other Items", int(tot_oth))
         
-        # Display Options
+        st.divider()
+        
+        # 2. Grand Total Outstanding
+        grand_outstanding = recovery_df['net_outstanding'].sum()
+        
+        # Table
         st.dataframe(
              recovery_df[['name', 'city', 'phone', 'inverter_count', 'charger_count', 'kit_count', 'other_count', 'total_sales', 'total_paid', 'opening_balance', 'net_outstanding']],
              use_container_width=True,
              column_config={
                  "name": "Customer Name",
-                 "inverter_count": st.column_config.NumberColumn("Inverters", format="%d"),
-                 "charger_count": st.column_config.NumberColumn("Chargers", format="%d"),
-                 "kit_count": st.column_config.NumberColumn("Kits", format="%d"),
-                 "other_count": st.column_config.NumberColumn("Others", format="%d"),
-                 "total_sales": st.column_config.NumberColumn("Total Sales", format="Rs. %.0f"),
-                 "total_paid": st.column_config.NumberColumn("Total Paid", format="Rs. %.0f"),
-                 "opening_balance": st.column_config.NumberColumn("Opening Bal", format="Rs. %.0f"),
+                 "inverter_count": st.column_config.NumberColumn("Inv", format="%d", width="small"),
+                 "charger_count": st.column_config.NumberColumn("Chg", format="%d", width="small"),
+                 "kit_count": st.column_config.NumberColumn("Kit", format="%d", width="small"),
+                 "other_count": st.column_config.NumberColumn("Oth", format="%d", width="small"),
+                 "total_sales": st.column_config.NumberColumn("Sales", format="Rs. %.0f"),
+                 "total_paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
+                 "opening_balance": st.column_config.NumberColumn("Op. Bal", format="Rs. %.0f"),
                  "net_outstanding": st.column_config.NumberColumn("Net Outstanding", format="Rs. %.0f"),
              },
-             hide_index=True
+             hide_index=True,
+             height=400
         )
-        
-        # Overall Total Payment
-        grand_outstanding = recovery_df['net_outstanding'].sum()
         
         st.markdown(f"""<div style="text-align:right; font-size:1.5rem; font-weight:bold; margin-top:15px; padding:20px; border:2px solid #7aa2f7; border-radius:10px;">Overall Total Outstanding: <span style="color:#7aa2f7">Rs. {grand_outstanding:,.2f}</span></div>""", unsafe_allow_html=True)
         
         # Export Button
-        # Export Button
         pdf_rec_bytes = create_recovery_list_pdf(recovery_df, grand_outstanding)
-        
         st.download_button(
-             label="📥 Download Full Report (PDF)",
+             label="📥 Download Recovery Report (PDF)",
              data=pdf_rec_bytes,
              file_name=f"Recovery_List_{datetime.now().strftime('%Y-%m-%d')}.pdf",
              mime="application/pdf",
@@ -2240,11 +2242,115 @@ elif menu == "📊 Business Reports":
     else:
         st.info("No customer data available.")
 
-    # Footer: Inventory Valuation
-    stock_value = db.get_inventory_valuation()
-    st.markdown("---")
-    st.markdown(f"### 📦 Total Stock Value: <span style='color:#9ece6a'>Rs. {stock_value:,.2f}</span>", unsafe_allow_html=True)
-    st.caption("Calculated based on Cost Price of current inventory.")
+    st.divider()
+
+    # --- SECTION E: STRATEGIC INSIGHTS ---
+    st.subheader("💡 Strategic Insights")
+    
+    # NEW: FINANCIAL HEALTH (Expenses & Sales Trend)
+    f_col1, f_col2 = st.columns(2)
+    
+    # 1. Expense Breakdown (Pie)
+    with f_col1:
+         st.markdown("#### 💸 Expense Breakdown (This Month)")
+         exp_breakdown = db.get_monthly_expenses_breakdown()
+         if not exp_breakdown.empty:
+             fig_exp = px.pie(
+                 exp_breakdown, 
+                 values='amount', 
+                 names='category', 
+                 hole=0.5,
+                 color_discrete_sequence=px.colors.qualitative.Pastel
+             )
+             fig_exp.update_layout(height=300, margin=dict(t=0, b=0, l=0, r=0))
+             st.plotly_chart(fig_exp, use_container_width=True)
+         else:
+             st.caption("No expenses recorded this month.")
+             
+    # 2. Sales Trend (Line)
+    with f_col2:
+         st.markdown("#### 📈 Sales Trend (Last 30 Days)")
+         sales_trend = db.get_sales_trend()
+         if not sales_trend.empty:
+              fig_trend = px.line(
+                  sales_trend,
+                  x='sale_date',
+                  y='total_amount',
+                  markers=True,
+                  line_shape='spline',
+              )
+              fig_trend.update_traces(line_color='#7aa2f7', line_width=3)
+              fig_trend.update_layout(height=300, margin=dict(t=0, b=0, l=0, r=0), xaxis_title="", yaxis_title="")
+              st.plotly_chart(fig_trend, use_container_width=True)
+         else:
+              st.caption("No sales data found.")
+
+    st.divider()
+    
+    history_df = db.get_job_history()
+    
+    if not history_df.empty:
+        col_bi1, col_bi2 = st.columns(2)
+        
+        # 3. Inventory Intelligence
+        with col_bi1:
+            st.markdown("#### 🔥 Top Selling Parts")
+            all_parts = []
+            for raw_parts in history_df['used_parts']:
+                if raw_parts and len(raw_parts) > 2:
+                    try:
+                        clean = raw_parts.replace("[","").replace("]","").replace("'","").replace('"',"")
+                        if clean:
+                            parts = [p.strip() for p in clean.split(',')]
+                            all_parts.extend(parts)
+                    except: pass
+            
+            if all_parts:
+                part_counts = pd.Series(all_parts).value_counts().reset_index()
+                part_counts.columns = ['Part Name', 'Qty Sold']
+                top_parts = part_counts.head(10)
+                
+                fig_inv = px.bar(
+                    top_parts, 
+                    x='Qty Sold', 
+                    y='Part Name', 
+                    orientation='h',
+                    title="",
+                    color='Qty Sold',
+                    color_continuous_scale='Magma'
+                )
+                fig_inv.update_layout(height=300, margin=dict(t=0, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_inv, use_container_width=True)
+            else:
+                st.info("No parts data found in history.")
+
+        # 4. Repair Profitability Matrix
+        with col_bi2:
+            st.markdown("#### 💎 Profitability Matrix")
+            matrix = history_df.groupby('inverter_model').agg(
+                Volume=('id', 'count'),
+                Avg_Profit=('service_cost', 'mean'),
+                Total_Revenue=('total_cost', 'sum')
+            ).reset_index()
+            
+            if not matrix.empty:
+                mean_vol = matrix['Volume'].mean()
+                mean_prof = matrix['Avg_Profit'].mean()
+                
+                fig_mat = px.scatter(
+                    matrix,
+                    x='Volume',
+                    y='Avg_Profit',
+                    size='Total_Revenue',
+                    color='inverter_model',
+                    hover_name='inverter_model',
+                    title="",
+                    labels={'Volume': 'Number of Repairs', 'Avg_Profit': 'Avg Service Fee'}
+                )
+                fig_mat.add_hline(y=mean_prof, line_dash="dash", line_color="white", annotation_text="Avg Profit")
+                fig_mat.add_vline(x=mean_vol, line_dash="dash", line_color="white", annotation_text="Avg Vol")
+                fig_mat.update_layout(showlegend=False, height=300, margin=dict(t=0, b=0), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+                st.plotly_chart(fig_mat, use_container_width=True)
 
 
 # --- TAB: CLIENT DIRECTORY ---
