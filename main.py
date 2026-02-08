@@ -760,52 +760,76 @@ def create_recovery_list_pdf(recovery_df, grand_total):
     pdf.cell(0, 6, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
     pdf.ln(10)
     
+    # Identify Dynamic Columns
+    cat_cols = [c for c in recovery_df.columns if c.endswith('_count') and c != 'other_count']
+    if 'other_count' in recovery_df.columns:
+        cat_cols.append('other_count')
+        
     # Table Config
     pdf.set_fill_color(220, 220, 220)
     pdf.set_font("Arial", 'B', 9)
     
+    # Static Widths
+    # Total Page Width ~280mm (A4 Landscape minus margins)
+    # Name(50) + City(25) + Phone(28) + Sales(22) + Paid(22) + Open(20) + Net(25) = 192mm
+    # Remaining: ~88mm for Categories
+    
+    # Headers
     pdf.cell(50, 10, "Customer Name", 1, 0, 'C', 1)
     pdf.cell(25, 10, "City", 1, 0, 'C', 1)
     pdf.cell(28, 10, "Phone", 1, 0, 'C', 1)
-    pdf.cell(12, 10, "Inv", 1, 0, 'C', 1)
-    pdf.cell(12, 10, "Chg", 1, 0, 'C', 1)
-    pdf.cell(12, 10, "Kit", 1, 0, 'C', 1)
-    pdf.cell(12, 10, "Oth", 1, 0, 'C', 1)
-    pdf.cell(28, 10, "Sales", 1, 0, 'C', 1)
-    pdf.cell(28, 10, "Paid", 1, 0, 'C', 1)
-    pdf.cell(25, 10, "Open Bal", 1, 0, 'C', 1)
-    pdf.cell(30, 10, "Net Due", 1, 1, 'C', 1)
+    
+    # Dynamic Headers
+    cat_width = 12
+    # Adjust width if too many cols
+    if len(cat_cols) > 0:
+        total_cat_width = 88
+        cat_width = max(8, total_cat_width / len(cat_cols))
+        
+    for c in cat_cols:
+        label = c.replace('_count', '')[:3].title() # Truncate to 3 chars
+        pdf.cell(cat_width, 10, label, 1, 0, 'C', 1)
+        
+    pdf.cell(22, 10, "Sales", 1, 0, 'C', 1)
+    pdf.cell(22, 10, "Paid", 1, 0, 'C', 1)
+    pdf.cell(20, 10, "Op. Bal", 1, 0, 'C', 1)
+    pdf.cell(25, 10, "Net Due", 1, 1, 'C', 1)
     
     # Rows
     pdf.set_font("Arial", size=8)
     for _, row in recovery_df.iterrows():
-        # Sanitize Name for Latin-1 (PDF) - Remove Emoji
+        # Sanitize Name
         raw_name = str(row['name'])
-        # Replace the specific cross mark if present
-        clean_name = raw_name.replace("❌", " (Deleted)")
+        clean_name = raw_name.replace("❌", " (Del)")
         # Ensure compatible with FPDF (Latin-1)
-        name = clean_name.encode('latin-1', 'replace').decode('latin-1')[:28]
+        try:
+            name = clean_name.encode('latin-1', 'replace').decode('latin-1')[:28]
+            city = str(row['city']).encode('latin-1', 'replace').decode('latin-1')[:15]
+        except:
+             name = clean_name[:28]
+             city = str(row['city'])[:15]
         
-        city = str(row['city']).encode('latin-1', 'replace').decode('latin-1')[:15]
         phone = str(row['phone'])
         
         pdf.cell(50, 8, name, 1)
         pdf.cell(25, 8, city, 1)
         pdf.cell(28, 8, phone, 1)
-        pdf.cell(12, 8, str(int(row['inverter_count'])), 1, 0, 'C')
-        pdf.cell(12, 8, str(int(row['charger_count'])), 1, 0, 'C')
-        pdf.cell(12, 8, str(int(row['kit_count'])), 1, 0, 'C')
-        pdf.cell(12, 8, str(int(row['other_count'])), 1, 0, 'C')
-        pdf.cell(28, 8, f"{row['total_sales']:,.0f}", 1, 0, 'R')
-        pdf.cell(28, 8, f"{row['total_paid']:,.0f}", 1, 0, 'R')
-        pdf.cell(25, 8, f"{row['opening_balance']:,.0f}", 1, 0, 'R')
-        pdf.cell(30, 8, f"{row['net_outstanding']:,.0f}", 1, 1, 'R')
+        
+        # Dynamic Counts
+        for c in cat_cols:
+            val = row.get(c, 0)
+            pdf.cell(cat_width, 8, str(int(val)), 1, 0, 'C')
+            
+        pdf.cell(22, 8, f"{row['total_sales']:,.0f}", 1, 0, 'R')
+        pdf.cell(22, 8, f"{row['total_paid']:,.0f}", 1, 0, 'R')
+        pdf.cell(20, 8, f"{row['opening_balance']:,.0f}", 1, 0, 'R')
+        pdf.cell(25, 8, f"{row['net_outstanding']:,.0f}", 1, 1, 'R')
 
     pdf.ln(5)
     
     # Summary
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(220, 10, "Overall Total Outstanding:", 0, 0, 'R')
+    pdf.cell(200, 10, "Overall Total Outstanding:", 0, 0, 'R')
     pdf.set_fill_color(200, 220, 255)
     pdf.cell(42, 10, f"Rs. {grand_total:,.2f}", 1, 1, 'R', 1)
     
@@ -1526,6 +1550,49 @@ if menu == "⚡ Quick Invoice":
                 next_inv = db.get_next_invoice_number()
                 st.text_input("Invoice #", value=next_inv, disabled=True)
 
+        # 1.5 PRODUCT SELECTION (New)
+        st.markdown("### 📦 Add Product")
+        
+        # Fetch Inventory for Dropdown
+        inventory_df = db.get_inventory()
+        inv_options = {}
+        if not inventory_df.empty:
+            # Create a label mapping: "Item Name - Rs. Price (Stock: X)" -> ID/Row
+             for _, row in inventory_df.iterrows():
+                 lbl = f"{row['item_name']} | Stock: {row['quantity']} | Rs. {row['selling_price']}"
+                 inv_options[lbl] = row
+        
+        col_prod1, col_prod2 = st.columns([3, 1])
+        with col_prod1:
+             selected_prod_label = st.selectbox("Select Stock Item", options=["Select Item..."] + list(inv_options.keys()), index=0, key="quick_inv_product_select")
+        
+        with col_prod2:
+             if st.button("⬇ Add to Cart", type="secondary", use_container_width=True):
+                 if selected_prod_label and selected_prod_label != "Select Item...":
+                     item_data = inv_options[selected_prod_label]
+                     
+                     # Create new row data
+                     new_row = {
+                         "Item Name": item_data['item_name'],
+                         "Qty": 1,
+                         "Rate": float(item_data['selling_price']),
+                         "Discount": 0.0,
+                         "Return Qty": 0,
+                         "Total": float(item_data['selling_price'])
+                     }
+                     
+                     # Append to session state
+                     st.session_state.sales_grid_data = pd.concat([
+                         st.session_state.sales_grid_data, 
+                         pd.DataFrame([new_row])
+                     ], ignore_index=True)
+                     
+                     st.toast(f"Added {item_data['item_name']}")
+                     time.sleep(0.5)
+                     st.rerun()
+                 else:
+                     st.toast("Please select an item first.")
+
         # 2. GRID ENTRY SYSTEM
         st.subheader("🛒 Items Cart")
         
@@ -1676,6 +1743,19 @@ if menu == "⚡ Quick Invoice":
                  # Fetch Cash Received if any
                  cash_received_h = db.get_cash_received_for_invoice(search_inv_input)
                  
+                 # ADD TO TABLE: specific request to show cash received in table
+                 if cash_received_h > 0:
+                     # Create a row for Cash Received
+                     cr_row = pd.DataFrame([{
+                         'Item Name': "💰 **Cash Received**",
+                         'Qty': 0,
+                         'Rate': 0,
+                         'Return Qty': 0,
+                         'Total': cash_received_h 
+                     }])
+                     disp_ph = pd.concat([disp_ph, cr_row], ignore_index=True)
+
+                 
                  # Inferred Extras
                  diff = 0.0
                  if ledger_total > subtotal_h:
@@ -1692,9 +1772,16 @@ if menu == "⚡ Quick Invoice":
                      st.markdown(f"### Total: Rs. {ledger_total:,.0f}")
                      
                      if cash_received_h > 0:
-                         st.markdown(f"**Cash Received:** Rs. {cash_received_h:,.0f}")
+                         # NEW PROMINENT DISPLAY
+                         st.markdown(f"""
+                         <div style="background-color:#1a1c24; padding:10px; border-radius:10px; border:2px solid #9ece6a; text-align:center; margin-top:10px;">
+                            <div style="font-size:0.9rem; color:#a9b1d6;">✅ Cash Received</div>
+                            <div style="font-size:1.5rem; font-weight:bold; color:#9ece6a;">Rs. {cash_received_h:,.0f}</div>
+                         </div>
+                         """, unsafe_allow_html=True)
                      
                      # Re-Print Button
+                     st.write("") # Spacer
                      if st.button("🖨️ Re-Print Invoice", key=f"reprint_{search_inv_input}", use_container_width=True):
                          # Generate PDF
                          # We need balances for PDF
@@ -2190,55 +2277,117 @@ elif menu == "📊 Business Reports":
     recovery_df = db.get_customer_recovery_list()
     
     if not recovery_df.empty:
-        # 1. Summaries
-        if 'inverter_count' in recovery_df.columns:
-            tot_inv = recovery_df['inverter_count'].sum()
-            tot_chg = recovery_df['charger_count'].sum()
-            tot_kit = recovery_df['kit_count'].sum()
-            tot_oth = recovery_df['other_count'].sum()
+        # 1. Summaries (Dynamic Categories)
+        
+        # Identify Category Columns (end with _count)
+        cat_cols = [c for c in recovery_df.columns if c.endswith('_count') and c != 'other_count']
+        
+        # Add 'other_count' at the end if it exists
+        if 'other_count' in recovery_df.columns:
+            cat_cols.append('other_count')
             
-            st.markdown("#### 📊 Sold Items Summary (All Customers)")
-            s1, s2, s3, s4 = st.columns(4)
-            s1.metric("Total Inverters", int(tot_inv))
-            s2.metric("Total Chargers", int(tot_chg))
-            s3.metric("Total Kits", int(tot_kit))
-            s4.metric("Other Items", int(tot_oth))
+        st.subheader("📊 Sold Items Summary (All Customers)")
         
-        st.divider()
-        
-        # 2. Grand Total Outstanding
+        # Create dynamic columns for cards
+        if cat_cols:
+            cols = st.columns(min(len(cat_cols), 6)) # Max 6 columns per row
+            
+            for idx, col_name in enumerate(cat_cols):
+                # Calculate total
+                total_val = recovery_df[col_name].sum()
+                # Label: "inverter_count" -> "Inverters"
+                label = col_name.replace('_count', 's').title()
+                
+                col_idx = idx % 6
+                with cols[col_idx]:
+                     st.metric(label=f"Total {label}", value=int(total_val))
+        else:
+            st.info("No categorical sales data available yet.")
+
+        st.markdown("---")
+
+        # 2. Detailed Table and Export
         grand_outstanding = recovery_df['net_outstanding'].sum()
         
-        # Table
+        # Configure Static Columns
+        column_cfg = {
+            "name": st.column_config.TextColumn("Customer Name", width="medium"),
+            "city": st.column_config.TextColumn("City", width="small"),
+            "phone": st.column_config.TextColumn("Phone", width="small"),
+            "total_sales": st.column_config.NumberColumn("Sales", format="Rs. %.0f"),
+            "total_paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
+            "opening_balance": st.column_config.NumberColumn("Op. Bal", format="Rs. %.0f"),
+            "net_outstanding": st.column_config.NumberColumn("Net Outstanding", format="Rs. %.0f"),
+            "other_count": st.column_config.NumberColumn("Other", format="%d"),
+        }
+        
+        # Add Dynamic Configs for Categories
+        for c in cat_cols:
+             if c != 'other_count':
+                 label = c.replace('_count', '').title()
+                 column_cfg[c] = st.column_config.NumberColumn(label, format="%d", width="small")
+
+        # Select Columns to Display
+        # Ensure we only select columns that actually exist
+        base_cols = ['name', 'city', 'phone']
+        financial_cols = ['total_sales', 'total_paid', 'opening_balance', 'net_outstanding']
+        
+        display_cols = base_cols + cat_cols + financial_cols
+        # Filter to ensure existence (just in case)
+        display_cols = [c for c in display_cols if c in recovery_df.columns]
+
         st.dataframe(
-             recovery_df[['name', 'city', 'phone', 'inverter_count', 'charger_count', 'kit_count', 'other_count', 'total_sales', 'total_paid', 'opening_balance', 'net_outstanding']],
-             use_container_width=True,
-             column_config={
-                 "name": "Customer Name",
-                 "inverter_count": st.column_config.NumberColumn("Inv", format="%d", width="small"),
-                 "charger_count": st.column_config.NumberColumn("Chg", format="%d", width="small"),
-                 "kit_count": st.column_config.NumberColumn("Kit", format="%d", width="small"),
-                 "other_count": st.column_config.NumberColumn("Oth", format="%d", width="small"),
-                 "total_sales": st.column_config.NumberColumn("Sales", format="Rs. %.0f"),
-                 "total_paid": st.column_config.NumberColumn("Paid", format="Rs. %.0f"),
-                 "opening_balance": st.column_config.NumberColumn("Op. Bal", format="Rs. %.0f"),
-                 "net_outstanding": st.column_config.NumberColumn("Net Outstanding", format="Rs. %.0f"),
-             },
-             hide_index=True,
-             height=400
+            recovery_df[display_cols],
+            use_container_width=True,
+            column_config=column_cfg,
+            hide_index=True,
+            height=500
         )
         
         st.markdown(f"""<div style="text-align:right; font-size:1.5rem; font-weight:bold; margin-top:15px; padding:20px; border:2px solid #7aa2f7; border-radius:10px;">Overall Total Outstanding: <span style="color:#7aa2f7">Rs. {grand_outstanding:,.2f}</span></div>""", unsafe_allow_html=True)
         
         # Export Button
-        pdf_rec_bytes = create_recovery_list_pdf(recovery_df, grand_outstanding)
-        st.download_button(
-             label="📥 Download Recovery Report (PDF)",
-             data=pdf_rec_bytes,
-             file_name=f"Recovery_List_{datetime.now().strftime('%Y-%m-%d')}.pdf",
-             mime="application/pdf",
-             type="primary"
-        )
+        # We need to ensure create_recovery_list_pdf can handle dynamic columns or we might need to update it too.
+        # For now, let's keep it simple or check if it needs update. 
+        # Checking db.create_recovery_list_pdf... assuming logic inside it is robust or we'll fix it next.
+        
+        # Export Button
+        # Correctly calling the standalone function
+        try:
+            pdf_bytes = create_recovery_list_pdf(recovery_df, grand_outstanding)
+            
+            c_d1, c_d2 = st.columns([1, 1])
+            with c_d1:
+                st.download_button(
+                     label="⬇️ Download Recovery List (PDF)",
+                     data=pdf_bytes,
+                     file_name=f"Customer_Recovery_{datetime.now().strftime('%Y-%m-%d')}.pdf",
+                     mime="application/pdf",
+                     type="primary"
+                )
+        except Exception as e:
+            st.error(f"Error generating PDF: {e}")
+            
+        # --- DELETE OPTION ---
+        st.markdown("---")
+        with st.expander("🗑️ Manage / Delete Customer Data", expanded=False):
+            st.warning("⚠️ Deleting a customer here will remove them from the **Directory**, **Ledger**, and **Sales History**. This action cannot be undone.")
+            
+            # List of names in the recovery list
+            del_options = ["Select Customer..."] + list(recovery_df['name'].unique())
+            
+            del_target = st.selectbox("Select Customer to Delete", options=del_options)
+            
+            if del_target and del_target != "Select Customer...":
+                # Clean name if it has " (Deleted)" or " ❌" marker
+                real_name = del_target.replace(" ❌", "").replace(" (Deleted)", "")
+                
+                if st.button(f"🗑️ Permanently Delete '{real_name}'", type="primary"):
+                    db.delete_customer_full_data(real_name)
+                    st.success(f"Deleted data for {real_name}.")
+                    time.sleep(1)
+                    st.rerun()
+
     else:
         st.info("No customer data available.")
 
@@ -2382,6 +2531,36 @@ elif menu == "👥 Partners & Ledger":
                   desc_val = st.session_state.get(f"desc_{current_party}", "")
                   
                   # Inputs
+                  # Inputs
+                  
+                  # TOGGLE FOR STOCK ITEM
+                  is_stock = st.checkbox("📦 Select from Inventory?", key=f"is_stock_{current_party}")
+                  
+                  # Load Inventory if needed
+                  stock_item_id = None
+                  stock_item_name = None
+                  
+                  if is_stock:
+                      inv_df = db.get_inventory()
+                      stock_opts = {}
+                      if not inv_df.empty:
+                          for _, r in inv_df.iterrows():
+                              lbl = f"{r['item_name']} (Stock: {r['quantity']}) - Rs. {r['selling_price']}"
+                              stock_opts[lbl] = r
+                      
+                      sel_stock = st.selectbox("Select Item", options=["Choose..."] + list(stock_opts.keys()), key=f"sel_stock_{current_party}")
+                      
+                      if sel_stock and sel_stock != "Choose...":
+                          s_data = stock_opts[sel_stock]
+                          stock_item_id = s_data['id']
+                          stock_item_name = s_data['item_name']
+                          
+                          # Auto-Populate Rate if it's 0 (First selection)
+                          # We use session state injection for Rate
+                          if st.session_state.get(f"r_{current_party}", 0) == 0:
+                               st.session_state[f"r_{current_party}"] = float(s_data['selling_price'])
+                               st.rerun()
+
                   q_curr = st.session_state.get(f"q_{current_party}", 0)
                   r_curr = st.session_state.get(f"r_{current_party}", 0.0)
                   disc_curr = st.session_state.get(f"disc_{current_party}", 0.0)
@@ -2393,9 +2572,18 @@ elif menu == "👥 Partners & Ledger":
                   # 1. Process BILL (Debit)
                   if bill_amt > 0:
                       bill_desc = desc_val if desc_val else "Bill"
-                      # REMOVED: Redundant (qty x rate) string since we have columns now
                       
-                      db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                      # Special Handling for Stock Sale
+                      if is_stock and stock_item_id:
+                          # Use new robust method
+                          # Override description if empty
+                          if not desc_val: bill_desc = f"Sale: {stock_item_name}"
+                          
+                          db.record_ledger_sale(current_party, d_val, stock_item_id, stock_item_name, q_curr, r_curr, disc_curr, bill_amt)
+                      else:
+                          # Standard Ledger Entry
+                          db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                          
                       entries_added += 1
                       
                   # 2. Process CASH RECEIVED (Credit)
@@ -2419,6 +2607,8 @@ elif menu == "👥 Partners & Ledger":
                       st.session_state[f"bill_{current_party}"] = 0.0
                       st.session_state[f"cash_{current_party}"] = 0.0
                       st.session_state[f"desc_{current_party}"] = ""
+                      # Reset Stock Toggle if desired? Maybe keep it.
+                      # st.session_state[f"is_stock_{current_party}"] = False 
                   else:
                       st.session_state['tx_msg'] = ('error', "Please enter a Bill Amount or Cash Received.")
 

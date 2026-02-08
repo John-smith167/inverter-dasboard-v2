@@ -1064,7 +1064,7 @@ class DatabaseManager:
         """
         Returns Customer Balances sorted by Highest Outstanding.
         Includes calculated columns: Total Sales, Total Paid, Net Outstanding.
-        Also includes counts for: Inverter, Charger, Kit, Other (based on sales description).
+        Now includes DYNAMIC counts for each Inventory Category (based on Sales table and Ledger descriptions).
         NOW INCLUDES: Deleted Customers (Active in Ledger but missing from Directory).
         """
         # 1. Get all customers (Directory)
@@ -1072,16 +1072,30 @@ class DatabaseManager:
         
         # 2. Get Ledger for all
         ledger = self._read_data("Ledger")
+        
+        # 3. Get Inventory to determine Categories
+        inventory = self.get_inventory()
+        # default categories if inventory is empty
+        categories = []
+        if not inventory.empty and 'category' in inventory.columns:
+            categories = sorted([c for c in inventory['category'].dropna().unique() if c and str(c).strip() != ""])
+        
+        # Columns for result
+        base_cols = ["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding"]
+        cat_cols = [f"{c}_count" for c in categories] + ["other_count"] # Dynamic columns
+        
         if ledger.empty:
             if customers_df.empty:
-                 return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
-                                       "inverter_count", "charger_count", "kit_count", "other_count"])
+                  return pd.DataFrame(columns=base_cols + cat_cols)
         
-        # 3. Identify ALL Parties (Directory + Ledger)
+        # 4. Identify ALL Parties (Directory + Ledger)
         ledger_parties = ledger['party_name'].unique() if not ledger.empty else []
         directory_parties = customers_df['name'].unique() if not customers_df.empty else []
         
         all_parties = set(list(ledger_parties) + list(directory_parties))
+        
+        # 5. Fetch Sales Data for more accurate category tracking (if available)
+        sales_df = self._read_data("Sales")
         
         results = []
         
@@ -1107,10 +1121,10 @@ class DatabaseManager:
             # --- LEDGER CALCULATIONS ---
             total_sales = 0.0
             total_paid = 0.0
-            inv_c = 0
-            chg_c = 0
-            kit_c = 0
-            oth_c = 0
+            
+            # Initialize Category Counts
+            cat_counts = {c: 0 for c in categories}
+            other_c = 0
             
             if not ledger.empty:
                 cust_ledger = ledger[ledger['party_name'] == p_name]
@@ -1119,23 +1133,32 @@ class DatabaseManager:
                     # Calculate Totals
                     total_sales = cust_ledger[cust_ledger['debit'] > 0]['debit'].sum()
                     total_paid = cust_ledger[cust_ledger['credit'] > 0]['credit'].sum()
+            
+            # --- CATEGORY BREAKDOWN ---
+            # Strategy: Use `Sales` table for precise item mapping if available.
+            # Fallback to Ledger Description for older/manual entries.
+            
+            if not sales_df.empty:
+                cust_sales = sales_df[sales_df['customer_name'] == p_name]
+                for _, s_row in cust_sales.iterrows():
+                    item_name = str(s_row['item_name']).lower()
+                    qty = float(s_row['quantity_sold'])
                     
-                    # Calculate Item Counts from Debits
-                    sales_txns = cust_ledger[cust_ledger['debit'] > 0]
-                    for _, row in sales_txns.iterrows():
-                        desc = str(row['description']).lower()
-                        matched = False
-                        if "inverter" in desc:
-                            inv_c += 1
-                            matched = True
-                        if "charger" in desc:
-                            chg_c += 1
-                            matched = True
-                        if "kit" in desc:
-                            kit_c += 1
-                            matched = True
-                        if not matched:
-                            oth_c += 1
+                    # Find category for this item in Inventory
+                    # (This might be slow if large inventory, but acceptable for now)
+                    found_cat = None
+                    if not inventory.empty:
+                        item_match = inventory[inventory['item_name'].str.lower() == item_name]
+                        if not item_match.empty:
+                             found_cat = item_match.iloc[0]['category']
+                    
+                    if found_cat and found_cat in cat_counts:
+                        cat_counts[found_cat] += qty
+                    else:
+                        other_c += qty
+            
+            # Note: We rely primarily on Sales table now for Item counts as it's cleaner. 
+            # Ledger descriptions are too variable. 
             
             # Net Outstanding
             net = total_sales - total_paid + c_open
@@ -1147,7 +1170,7 @@ class DatabaseManager:
                 # Add status tag to name if deleted
                 display_name = p_name if not is_deleted else f"{p_name} ❌"
                 
-                results.append({
+                row_data = {
                     "customer_id": cust_info.get('customer_id', 'N/A'),
                     "name": display_name,
                     "city": c_city,
@@ -1156,15 +1179,16 @@ class DatabaseManager:
                     "total_paid": total_paid,
                     "opening_balance": c_open,
                     "net_outstanding": net,
-                    "inverter_count": inv_c,
-                    "charger_count": chg_c,
-                    "kit_count": kit_c,
-                    "other_count": oth_c
-                })
+                    "other_count": other_c
+                }
+                # Add Category Counts
+                for c in categories:
+                    row_data[f"{c}_count"] = cat_counts[c]
+                
+                results.append(row_data)
                 
         if not results:
-             return pd.DataFrame(columns=["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding", 
-                                       "inverter_count", "charger_count", "kit_count", "other_count"])
+             return pd.DataFrame(columns=base_cols + cat_cols)
              
         df_res = pd.DataFrame(results)
         # Sort by Net Outstanding (descending)
