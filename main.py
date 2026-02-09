@@ -2799,6 +2799,7 @@ elif menu == "👷 Staff & Payroll":
             
             # Display in Ascending order (Chronological)
             display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=True)[['id', 'date', 'type', 'description', 'earned', 'paid', 'Balance']].copy()
+            display_df.reset_index(drop=True, inplace=True)
             
             st.dataframe(display_df, use_container_width=True, height=400, 
                          column_config={
