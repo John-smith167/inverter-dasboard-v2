@@ -1073,16 +1073,13 @@ class DatabaseManager:
         # 2. Get Ledger for all
         ledger = self._read_data("Ledger")
         
-        # 3. Get Inventory to determine Categories
+    # 3. Defined Categories (Fixed)
         inventory = self.get_inventory()
-        # default categories if inventory is empty
-        categories = []
-        if not inventory.empty and 'category' in inventory.columns:
-            categories = sorted([c for c in inventory['category'].dropna().unique() if c and str(c).strip() != ""])
+        categories = ["Inverter", "Charger", "Supplier"]
         
         # Columns for result
         base_cols = ["customer_id", "name", "city", "phone", "total_sales", "total_paid", "opening_balance", "net_outstanding"]
-        cat_cols = [f"{c}_count" for c in categories] + ["other_count"] # Dynamic columns
+        cat_cols = [f"{c}_count" for c in categories] + ["other_count"] 
         
         if ledger.empty:
             if customers_df.empty:
@@ -1144,21 +1141,63 @@ class DatabaseManager:
                     item_name = str(s_row['item_name']).lower()
                     qty = float(s_row['quantity_sold'])
                     
-                    # Find category for this item in Inventory
-                    # (This might be slow if large inventory, but acceptable for now)
+                    # 1. Check Fixed Categories (Explicit Match)
+                    found_fixed = False
+                    for cat in categories:
+                        if cat.lower() == item_name:
+                            cat_counts[cat] += qty
+                            found_fixed = True
+                            break
+                    
+                    if found_fixed:
+                        continue
+
+                    # 2. Fallback: Find category for this item in Inventory
                     found_cat = None
                     if not inventory.empty:
                         item_match = inventory[inventory['item_name'].str.lower() == item_name]
                         if not item_match.empty:
-                             found_cat = item_match.iloc[0]['category']
+                             raw_cat = str(item_match.iloc[0]['category']).strip()
+                             # Normalize helper
+                             for known_cat in categories:
+                                 if known_cat.lower() in raw_cat.lower():
+                                     found_cat = known_cat
+                                     break
                     
                     if found_cat and found_cat in cat_counts:
                         cat_counts[found_cat] += qty
                     else:
                         other_c += qty
-            
-            # Note: We rely primarily on Sales table now for Item counts as it's cleaner. 
-            # Ledger descriptions are too variable. 
+
+            # --- MANUAL LEDGER SALES BREAKDOWN ---
+            # Capture sales recorded directly in Ledger (not in Sales table)
+            if not cust_ledger.empty:
+                # Filter: Debit > 0 AND Description implies manual sale (not auto-generated Invoice)
+                # Auto-generated invoices usually start with "Invoice #" or "Bill"
+                manual_sales = cust_ledger[
+                    (cust_ledger['debit'] > 0) & 
+                    (~cust_ledger['description'].astype(str).str.startswith(("Invoice #", "Bill"), na=False))
+                ]
+                
+                for _, l_row in manual_sales.iterrows():
+                    desc = str(l_row['description']).lower()
+                    qty = float(l_row.get('quantity', 0))
+                    
+                    if qty <= 0: continue # Skip if no quantity linked
+                    
+                    # Keyword Match in Description
+                    matched = False
+                    for cat in categories:
+                        if cat.lower() in desc:
+                            cat_counts[cat] += qty
+                            matched = True
+                            break
+                    
+                    # Optional: If "Sale:" is in desc but no category match, maybe count as Other?
+                    # For now, let's strictly count known categories to avoid noise.
+                    if not matched and "sale" in desc:
+                         other_c += qty
+
             
             # Net Outstanding
             net = total_sales - total_paid + c_open

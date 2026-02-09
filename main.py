@@ -1550,35 +1550,26 @@ if menu == "⚡ Quick Invoice":
                 next_inv = db.get_next_invoice_number()
                 st.text_input("Invoice #", value=next_inv, disabled=True)
 
-        # 1.5 PRODUCT SELECTION (New)
+        # 1.5 PRODUCT SELECTION (Fixed Categories)
         st.markdown("### 📦 Add Product")
-        
-        # Fetch Inventory for Dropdown
-        inventory_df = db.get_inventory()
-        inv_options = {}
-        if not inventory_df.empty:
-            # Create a label mapping: "Item Name - Rs. Price (Stock: X)" -> ID/Row
-             for _, row in inventory_df.iterrows():
-                 lbl = f"{row['item_name']} | Stock: {row['quantity']} | Rs. {row['selling_price']}"
-                 inv_options[lbl] = row
         
         col_prod1, col_prod2 = st.columns([3, 1])
         with col_prod1:
-             selected_prod_label = st.selectbox("Select Stock Item", options=["Select Item..."] + list(inv_options.keys()), index=0, key="quick_inv_product_select")
+             # Fixed Categories
+             selected_category = st.selectbox("Select Product Category", options=["Select Category...", "Inverter", "Charger", "Supplier", "Other"], index=0, key="quick_inv_product_select")
         
         with col_prod2:
              if st.button("⬇ Add to Cart", type="secondary", use_container_width=True):
-                 if selected_prod_label and selected_prod_label != "Select Item...":
-                     item_data = inv_options[selected_prod_label]
+                 if selected_category and selected_category != "Select Category...":
                      
                      # Create new row data
                      new_row = {
-                         "Item Name": item_data['item_name'],
+                         "Item Name": selected_category, # Default name is the category
                          "Qty": 1,
-                         "Rate": float(item_data['selling_price']),
+                         "Rate": 0.0, # User must enter rate
                          "Discount": 0.0,
                          "Return Qty": 0,
-                         "Total": float(item_data['selling_price'])
+                         "Total": 0.0
                      }
                      
                      # Append to session state
@@ -1587,11 +1578,11 @@ if menu == "⚡ Quick Invoice":
                          pd.DataFrame([new_row])
                      ], ignore_index=True)
                      
-                     st.toast(f"Added {item_data['item_name']}")
+                     st.toast(f"Added {selected_category}")
                      time.sleep(0.5)
                      st.rerun()
                  else:
-                     st.toast("Please select an item first.")
+                     st.toast("Please select a category first.")
 
         # 2. GRID ENTRY SYSTEM
         st.subheader("🛒 Items Cart")
@@ -1798,9 +1789,13 @@ if menu == "⚡ Quick Invoice":
                          # Let's use the standard formula: Prev = Current - GrandTotal + Cash
                          prev_bal_p = cur_bal_p - ledger_total + cash_received_h
                          
+                         # Prepare DF for PDF (Rename columns check)
+                         pdf_items = items_df[['item_name', 'quantity_sold', 'sale_price', 'return_quantity', 'total_amount']].copy()
+                         pdf_items.columns = ['Item Name', 'Qty', 'Rate', 'Return Qty', 'Total']
+                         
                          pdf_bytes = create_sales_invoice_pdf(
                              search_inv_input, cust_name_h, date_h, 
-                             items_df, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_received_h
+                             pdf_items, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_received_h
                          )
                          
                          st.download_button(
@@ -2077,7 +2072,7 @@ elif menu == "📦 Product Inventory":
         with st.expander("➕ Add New Stock Item", expanded=True):
             c1, c2, c3 = st.columns(3)
             i_name = c1.text_input("Item Name", key="new_i_name")
-            cat = c2.text_input("Category", placeholder="e.g. Battery", key="new_i_cat")
+            cat = c2.selectbox("Category", ["Inverter", "Charger", "Supplier", "Other"], key="new_i_cat")
             qty = c3.number_input("Quantity", min_value=1, step=1, key="new_i_qty")
             
             c4, c5 = st.columns(2)
@@ -2525,41 +2520,23 @@ elif menu == "👥 Partners & Ledger":
         
         # Add Entry Form
         with st.expander("➕ Add Transaction", expanded=False):
+             # TOGGLE FOR STOCK ITEM (Correctly placed outside callback)
+             is_stock = st.checkbox("📦 Select Product Category?", key=f"is_stock_{current_party}")
+             
+             selected_category = None
+             if is_stock:
+                 selected_category = st.selectbox("Select Category", options=["Choose...", "Inverter", "Charger", "Supplier", "Other"], key=f"sel_stock_{current_party}")
+                 if selected_category == "Choose...":
+                      selected_category = None
+
              # Callback to handle transaction addition safely
              def add_transaction_callback():
                   d_val = st.session_state.get(f"d_{current_party}")
                   desc_val = st.session_state.get(f"desc_{current_party}", "")
                   
-                  # Inputs
-                  # Inputs
-                  
-                  # TOGGLE FOR STOCK ITEM
-                  is_stock = st.checkbox("📦 Select from Inventory?", key=f"is_stock_{current_party}")
-                  
-                  # Load Inventory if needed
-                  stock_item_id = None
-                  stock_item_name = None
-                  
-                  if is_stock:
-                      inv_df = db.get_inventory()
-                      stock_opts = {}
-                      if not inv_df.empty:
-                          for _, r in inv_df.iterrows():
-                              lbl = f"{r['item_name']} (Stock: {r['quantity']}) - Rs. {r['selling_price']}"
-                              stock_opts[lbl] = r
-                      
-                      sel_stock = st.selectbox("Select Item", options=["Choose..."] + list(stock_opts.keys()), key=f"sel_stock_{current_party}")
-                      
-                      if sel_stock and sel_stock != "Choose...":
-                          s_data = stock_opts[sel_stock]
-                          stock_item_id = s_data['id']
-                          stock_item_name = s_data['item_name']
-                          
-                          # Auto-Populate Rate if it's 0 (First selection)
-                          # We use session state injection for Rate
-                          if st.session_state.get(f"r_{current_party}", 0) == 0:
-                               st.session_state[f"r_{current_party}"] = float(s_data['selling_price'])
-                               st.rerun()
+                  # Retrieve Stock Selection from State
+                  is_stock_val = st.session_state.get(f"is_stock_{current_party}", False)
+                  sel_cat_val = st.session_state.get(f"sel_stock_{current_party}", "Choose...")
 
                   q_curr = st.session_state.get(f"q_{current_party}", 0)
                   r_curr = st.session_state.get(f"r_{current_party}", 0.0)
@@ -2573,13 +2550,18 @@ elif menu == "👥 Partners & Ledger":
                   if bill_amt > 0:
                       bill_desc = desc_val if desc_val else "Bill"
                       
-                      # Special Handling for Stock Sale
-                      if is_stock and stock_item_id:
-                          # Use new robust method
-                          # Override description if empty
-                          if not desc_val: bill_desc = f"Sale: {stock_item_name}"
-                          
-                          db.record_ledger_sale(current_party, d_val, stock_item_id, stock_item_name, q_curr, r_curr, disc_curr, bill_amt)
+                      # Special Handling for Category Sale
+                      if is_stock_val and sel_cat_val and sel_cat_val != "Choose...":
+                          # Override description if empty or generic
+                          if not desc_val: 
+                              bill_desc = f"Sale: {sel_cat_val}"
+                          else:
+                               # Append category so reports can pick it up
+                               bill_desc = f"{desc_val} ({sel_cat_val})"
+                               
+                          # We do NOT use record_ledger_sale anymore because we are not deducting specific stock.
+                          # Just record the ledger entry with quantities.
+                          db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
                       else:
                           # Standard Ledger Entry
                           db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
@@ -2815,8 +2797,8 @@ elif menu == "👷 Staff & Payroll":
             ledger_df_asc = ledger_df.sort_values(by=['date', 'id'], ascending=True)
             ledger_df_asc['Balance'] = (ledger_df_asc['earned'] - ledger_df_asc['paid']).cumsum()
             
-            # Display in descending order
-            display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=False)[['id', 'date', 'type', 'description', 'earned', 'paid', 'Balance']].copy()
+            # Display in Ascending order (Chronological)
+            display_df = ledger_df_asc.sort_values(by=['date', 'id'], ascending=True)[['id', 'date', 'type', 'description', 'earned', 'paid', 'Balance']].copy()
             
             st.dataframe(display_df, use_container_width=True, height=400, 
                          column_config={
