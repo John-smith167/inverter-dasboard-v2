@@ -267,10 +267,10 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.cell(45, 8, "Item / Description", 1, 0, 'C', 1)
     pdf.cell(10, 8, "Qty", 1, 0, 'C', 1)
     pdf.cell(18, 8, "Rate", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Total Bill", 1, 0, 'C', 1)
+    pdf.cell(23, 8, "Debit", 1, 0, 'C', 1)
     pdf.cell(15, 8, "Discount", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Cash Rec.", 1, 0, 'C', 1)
-    pdf.cell(28, 8, "Rem. Balance", 1, 1, 'C', 1)
+    pdf.cell(23, 8, "Credit", 1, 0, 'C', 1)
+    pdf.cell(28, 8, "Balance", 1, 1, 'C', 1)
     
     # --- TABLE ROWS ---
     pdf.set_font("Arial", size=8)
@@ -321,11 +321,11 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     total_debit = ledger_df['debit'].sum()
     total_credit = ledger_df['credit'].sum()
     
-    pdf.cell(50, 6, "Total Bill Amount:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Debit:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_debit:,.0f}", 0, 1, 'R')
     
     pdf.set_x(100)
-    pdf.cell(50, 6, "Total Received:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Credit:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_credit:,.0f}", 0, 1, 'R')
     
     pdf.line(110, pdf.get_y()+1, 200, pdf.get_y()+1)
@@ -493,7 +493,7 @@ def num_to_words(n):
     except:
         return ""
 
-def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total, previous_balance, outstanding_balance, cash_received=0.0):
+def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal, freight, misc, grand_total, previous_balance, outstanding_balance, cash_received=0.0, is_purchase=False):
     pdf = FPDF()
     pdf.add_page()
     
@@ -515,7 +515,11 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 16)
     
-    title_text = "Payment Receipt" if is_receipt else "Sales Invoice"
+    if is_purchase:
+        title_text = "PURCHASE INVOICE / RECEIVING"
+    else:
+        title_text = "Payment Receipt" if is_receipt else "Sales Invoice"
+        
     pdf.cell(0, 8, txt=title_text, ln=True, align='C')
     
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
@@ -525,7 +529,11 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     
     # Invoice No & Date
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Ref #:" if is_receipt else "Invoice #:", 0, 0)
+    if is_purchase:
+        pdf.cell(25, 6, "Purchase #:", 0, 0)
+    else:
+        pdf.cell(20, 6, "Ref #:" if is_receipt else "Invoice #:", 0, 0)
+        
     pdf.set_font("Arial", size=10)
     pdf.cell(40, 6, str(invoice_no), 0, 0)
     
@@ -538,25 +546,26 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.line(10, pdf.get_y()+1, 200, pdf.get_y()+1)
     pdf.ln(3)
 
-    # Customer Details
+    # Customer/Supplier Details
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(20, 6, "Customer:", 0, 0)
+    label_party = "Supplier / Client:" if is_purchase else "Customer:"
+    pdf.cell(30, 6, label_party, 0, 0)
     pdf.set_font("Arial", size=10)
     pdf.cell(100, 6, str(customer), 0, 1)
     
     pdf.ln(5)
 
     # --- TABLE HEADER ---
-    if not is_receipt:
+    if not is_receipt or (is_purchase and not items_df.empty):
         pdf.set_fill_color(240, 240, 240)
         pdf.set_font("Arial", 'B', 10)
         
         pdf.cell(10, 8, "S#", 1, 0, 'C', 1)
         pdf.cell(80, 8, "Item Description", 1, 0, 'C', 1)
         pdf.cell(15, 8, "Qty", 1, 0, 'C', 1)
-        pdf.cell(25, 8, "Rate", 1, 0, 'C', 1)
-        pdf.cell(20, 8, "Discount", 1, 0, 'C', 1)
-        pdf.cell(40, 8, "Net Amount", 1, 1, 'C', 1)
+        pdf.cell(25, 8, "Rate/Cost", 1, 0, 'C', 1)
+        pdf.cell(20, 8, "Has Ret?", 1, 0, 'C', 1) # Simplified for Purchase
+        pdf.cell(40, 8, "Amount", 1, 1, 'C', 1)
 
         # --- TABLE ROWS ---
         pdf.set_font("Arial", size=9)
@@ -567,14 +576,20 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
             ret = float(row.get('Return Qty', 0))
             net_qty = qty - ret
             rate = float(row['Rate'])
-            discount = float(row.get('Discount', 0))
+            
+            # Purchase usually doesn't have discount column in UI, but if it does:
+            discount = float(row.get('Discount', 0)) 
             total = float(row['Total'])
             
             pdf.cell(10, 8, str(idx), 1, 0, 'C')
             pdf.cell(80, 8, item_name, 1, 0, 'L')
-            pdf.cell(15, 8, f"{net_qty:g}", 1, 0, 'C')
+            pdf.cell(15, 8, f"{qty:g}", 1, 0, 'C') # Show Raw Qty for Purchase usually, or Net?
             pdf.cell(25, 8, f"{rate:g}", 1, 0, 'R')
-            pdf.cell(20, 8, f"{discount:g}", 1, 0, 'R')
+            
+            # reused column
+            val = f"{discount:g}" if not is_purchase else "-"
+            pdf.cell(20, 8, val, 1, 0, 'R') 
+            
             pdf.cell(40, 8, f"{total:,.2f}", 1, 1, 'R')
             idx += 1
             
@@ -583,7 +598,8 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
         # Receipt View - Just show the main description
         pdf.set_fill_color(245, 245, 245)
         pdf.set_font("Arial", size=12)
-        pdf.multi_cell(0, 10, f"Received payment from {customer}.", border=1, align='C', fill=True)
+        action = "Paid to" if is_purchase else "Received payment from"
+        pdf.multi_cell(0, 10, f"{action} {customer}.", border=1, align='C', fill=True)
         pdf.ln(5)
 
     # --- SUMMARY SECTION ---
@@ -594,33 +610,35 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     pdf.set_x(110)
     pdf.set_font("Arial", 'B', 10)
     
-    if not is_receipt:
+    if not is_receipt or (is_purchase and not items_df.empty):
         pdf.cell(45, 7, "Total:", 0, 0, 'R')
         pdf.cell(35, 7, f"{subtotal:,.2f}", 1, 1, 'R')
         
         if freight > 0 or misc > 0:
             extras = freight + misc
-            pdf.cell(45, 7, "Freight/Labor:", 0, 0, 'R')
+            pdf.cell(45, 7, "Extra Costs:", 0, 0, 'R')
             pdf.cell(35, 7, f"{extras:,.2f}", 1, 1, 'R')
 
-        pdf.cell(45, 7, "Bill Total:", 0, 0, 'R')
+        pdf.cell(45, 7, "Grand Total:", 0, 0, 'R')
         pdf.cell(35, 7, f"{grand_total:,.2f}", 1, 1, 'R')
 
     if cash_received > 0:
         pdf.set_fill_color(230, 255, 230)
-        pdf.cell(45, 7, "Cash Received:", 0, 0, 'R', is_receipt)
+        label_cash = "Cash Paid:" if is_purchase else "Cash Received:"
+        pdf.cell(45, 7, label_cash, 0, 0, 'R', is_receipt)
         pdf.cell(35, 7, f"{cash_received:,.2f}", 1, 1, 'R', is_receipt)
     
+    # Balances
     if not is_receipt:
         current_bill_bal = grand_total - cash_received
-        pdf.cell(45, 7, "Bill Balance:", 0, 0, 'R')
+        pdf.cell(45, 7, "Balance Due:", 0, 0, 'R')
         pdf.cell(35, 7, f"{current_bill_bal:,.2f}", 1, 1, 'R')
     
     pdf.cell(45, 7, "Previous Balance:", 0, 0, 'R')
     pdf.cell(35, 7, f"{previous_balance:,.2f}", 1, 1, 'R')
     
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(45, 8, "Outstanding Balance:", 0, 0, 'R')
+    pdf.cell(45, 8, "Net Outstanding:", 0, 0, 'R')
     pdf.cell(35, 8, f"{outstanding_balance:,.2f}", 1, 1, 'R')
     
     y_after_totals = pdf.get_y()
@@ -633,10 +651,12 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
         pdf.set_font("Arial", 'B', 10)
         pdf.cell(20, 6, "Remarks:", 0, 1)
         pdf.set_font("Arial", size=9)
-        pdf.multi_cell(90, 5, "Warranty claims as per company policy. No return/change without invoice.", border=1)
+        note = "Items purchased are subject to inspection." if is_purchase else "Warranty claims as per company policy. No return/change without invoice."
+        pdf.multi_cell(90, 5, note, border=1)
     else:
         pdf.set_font("Arial", 'I', 9)
-        pdf.cell(90, 6, "Thank you for your payment.", 0, 1)
+        thanks = "Transaction Recorded."
+        pdf.cell(90, 6, thanks, 0, 1)
     
     pdf.set_y(max(y_after_totals, pdf.get_y()) + 5)
     
@@ -659,8 +679,8 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
     
     # Signatures
     pdf.set_font("Arial", 'B', 10)
-    pdf.cell(90, 6, "Prepared By", 0, 0, 'L')
-    pdf.cell(0, 6, "Receiver Signature", 0, 1, 'R')
+    pdf.cell(90, 6, "Authorized By", 0, 0, 'L')
+    pdf.cell(0, 6, "Vendor / Client Signature", 0, 1, 'R')
     pdf.ln(5)
     pdf.cell(90, 6, "_________________", 0, 0, 'L')
     pdf.cell(0, 6, "_________________", 0, 1, 'R')
@@ -880,6 +900,62 @@ def render_stock_valuation_table(db_instance):
         st.info("No stock data available.")
     
     st.divider()
+
+def create_inventory_ledger_pdf(item_name, item_history):
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+
+    # Header
+    pdf.set_font("Arial", 'B', 16)
+    if os.path.exists("logo.png"):
+        pdf.image("logo.png", 10, 8, 33)
+        
+    pdf.set_y(15)
+    pdf.cell(0, 10, txt="SK INVERTX TRADERS", ln=True, align='C')
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 8, txt="Product Stock Ledger", ln=True, align='C')
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(0, 6, txt=f"Product: {item_name}", ln=True, align='C')
+    pdf.set_font("Arial", size=9)
+    pdf.cell(0, 6, txt=f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
+    pdf.ln(5)
+    
+    # Table Config
+    pdf.set_fill_color(220, 220, 220)
+    pdf.set_font("Arial", 'B', 10)
+    
+    # Cols: Time(40), Type(25), Change(20), Ref(45), Desc(60)
+    pdf.cell(40, 10, "Date/Time", 1, 0, 'C', 1)
+    pdf.cell(25, 10, "Type", 1, 0, 'C', 1)
+    pdf.cell(20, 10, "Change", 1, 0, 'C', 1)
+    pdf.cell(45, 10, "Reference", 1, 0, 'C', 1)
+    pdf.cell(60, 10, "Description", 1, 1, 'C', 1)
+    
+    # Rows
+    pdf.set_font("Arial", size=9)
+    for _, row in item_history.iterrows():
+        # Sanitize
+        ts = str(row['timestamp'])
+        reason = str(row['reason'])
+        change = f"{row['change']:+d}"
+        ref = str(row['reference'])[:20]
+        desc = str(row['description'])[:30]
+        
+        pdf.cell(40, 8, ts, 1, 0, 'C')
+        pdf.cell(25, 8, reason, 1, 0, 'C')
+        
+        # Color logic? FPDF is tricky with partial color. Keep simple.
+        pdf.cell(20, 8, change, 1, 0, 'C')
+        
+        try:
+             pdf.cell(45, 8, ref.encode('latin-1', 'replace').decode('latin-1'), 1, 0, 'L')
+             pdf.cell(60, 8, desc.encode('latin-1', 'replace').decode('latin-1'), 1, 1, 'L')
+        except:
+             pdf.cell(45, 8, ref, 1, 0, 'L')
+             pdf.cell(60, 8, desc, 1, 1, 'L')
+
+    return pdf.output(dest='S').encode('latin-1')
 
 
 # Page Config
@@ -1149,13 +1225,40 @@ def inventory_dialog(item_id, item_name, current_price, current_cost, current_qt
         new_cost = c2.number_input("Cost Price", value=float(current_cost) if pd.notnull(current_cost) else 0.0)
         
         c3, c4 = st.columns(2)
-        add_qty = c3.number_input("Add Qty", min_value=0, value=0, step=1)
-        del_qty = c4.number_input("Remove Qty", min_value=0, value=0, step=1)
+        add_qty = c3.number_input("Add Qty (Restock)", min_value=0, value=0, step=1)
+        del_qty = c4.number_input("Remove Qty (Sale/Use)", min_value=0, value=0, step=1)
+        
+        st.markdown("---")
+        st.caption("📝 Log Details")
+        c5, c6 = st.columns(2)
+        ref_input = c5.text_input("Reference / Client", placeholder="e.g. Walk-in, Client Name")
+        desc_input = c6.text_input("Description / Note", placeholder="e.g. Sold 5 units")
         
         if st.form_submit_button("Update Inventory"):
             final_qty = max(0, current_qty + add_qty - del_qty)
-            db.update_inventory_item(item_id, final_qty, new_cost, new_price)
+            
+            # Determine Log Data
+            net_change = add_qty - del_qty
+            reason = "Update"
+            if net_change > 0: reason = "Restock"
+            elif net_change < 0: reason = "Sale"
+            elif new_price != current_price or new_cost != current_cost: reason = "Price Update"
+            
+            # Auto-generate description if empty
+            if not desc_input:
+                if reason == "Restock": desc_input = f"Restocked {add_qty}"
+                elif reason == "Sale": desc_input = f"Sold {del_qty}"
+            
+            log_data = {
+                "change": net_change,
+                "reason": reason,
+                "reference": ref_input,
+                "description": desc_input
+            }
+            
+            db.update_inventory_item(item_id, final_qty, new_cost, new_price, log_data=log_data)
             st.success(f"Updated {item_name}!")
+            time.sleep(0.5)
             st.rerun()
 
     st.divider()
@@ -1530,25 +1633,47 @@ if menu == "⚡ Quick Invoice":
             st.session_state.sales_grid_data = pd.DataFrame(
                 [{"Item Name": "", "Qty": 1, "Rate": 0.0, "Discount": 0.0, "Return Qty": 0, "Total": 0.0}] * 3
             )
+            
+        # --- CACHING LOGIC ---
+        # Only fetch customers/Ids if not in session or explicit refresh needed
+        if 'cached_customers' not in st.session_state:
+            st.session_state.cached_customers = db.get_all_customers()
+        
+        if 'cached_next_inv' not in st.session_state or 'cached_next_pur' not in st.session_state:
+            st.session_state.cached_next_inv = db.get_next_invoice_number()
+            st.session_state.cached_next_pur = db.get_next_purchase_number()
 
         # 1. HEADER SECTION
         with st.container(border=True):
+            # NEW: Transaction Type Toggle
+            txn_type = st.radio("Transaction Type", ["Sale (Bill)", "Purchase (Stock In)"], horizontal=True, label_visibility="collapsed")
+            is_purchase = "Purchase" in txn_type
+            
+            st.caption(f"Mode: **{txn_type}**")
+            
             c1, c2, c3 = st.columns([2, 1, 1])
             
-            # Get Customer List
-            customers_df = db.get_all_customers()
+            # Get Party List (from cache)
+            customers_df = st.session_state.cached_customers
             cust_names = customers_df['name'].tolist() if not customers_df.empty else []
             
             with c1:
-                customer_name = st.selectbox("Select Customer", ["Counter Sale"] + cust_names, index=0)
+                label_cust = "Select Supplier / Client" if is_purchase else "Select Customer"
+                customer_name = st.selectbox(label_cust, ["Counter Sale"] + cust_names, index=0)
                 
             with c2:
-                inv_date = st.date_input("Invoicing Date", value=datetime.now().date())
+                inv_date = st.date_input("Date", value=datetime.now().date())
                 
             with c3:
-                # Auto-generated Invoice #
-                next_inv = db.get_next_invoice_number()
-                st.text_input("Invoice #", value=next_inv, disabled=True)
+                # ID (from cache)
+                if is_purchase:
+                    next_inv = st.session_state.cached_next_pur
+                    label_id = "Purchase Ref #"
+                else:
+                    next_inv = st.session_state.cached_next_inv
+                    label_id = "Invoice #"
+                    
+                st.text_input(label_id, value=next_inv, disabled=True)
 
         # 1.5 PRODUCT SELECTION (Fixed Categories)
         st.markdown("### 📦 Add Product")
@@ -1587,6 +1712,10 @@ if menu == "⚡ Quick Invoice":
         # 2. GRID ENTRY SYSTEM
         st.subheader("🛒 Items Cart")
         
+        # Adjustable Column Config based on Type
+        # For Purchase: Rate = Cost Price. Discount often not needed but kept for flexibility.
+        rate_label = "Cost Price (Rs.)" if is_purchase else "Rate (Rs.)"
+        
         # Editable Dataframe
         # We use column_config to enforce types
         edited_df = st.data_editor(
@@ -1596,7 +1725,7 @@ if menu == "⚡ Quick Invoice":
             column_config={
                 "Item Name": st.column_config.TextColumn("Item Name (Type freely)", width="large", required=True),
                 "Qty": st.column_config.NumberColumn("Qty", min_value=0, step=1, required=True),
-                "Rate": st.column_config.NumberColumn("Rate (Rs.)", min_value=0.0, step=10.0, required=True),
+                "Rate": st.column_config.NumberColumn(rate_label, min_value=0.0, step=10.0, required=True),
                 "Discount": st.column_config.NumberColumn("Discount", min_value=0.0, step=10.0),
                 "Return Qty": st.column_config.NumberColumn("Return Qty", min_value=0, step=1),
                 "Total": st.column_config.NumberColumn("Total", disabled=True) # Calculated column
@@ -1622,24 +1751,34 @@ if menu == "⚡ Quick Invoice":
             
         with fc3:
             grand_total = subtotal + freight + misc
-            st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Payable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
             
-            cash_received = st.number_input("Cash Received", min_value=0.0, step=100.0)
+            # Visual Feedback
+            if is_purchase:
+                 # We Pay (Red/Orange) - Label updated per user request
+                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #eb4d4b; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💸 Net Payable (We paid)</div><div style="font-size:2rem; font-weight:bold; color:#eb4d4b;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
+                 cash_val = 0.0 # User requested removal of Cash Paid option for Purchase
+            else:
+                 # We Receive (Blue/Green)
+                 st.markdown(f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px; border:2px solid #7aa2f7; text-align:center;"><div style="font-size:0.9rem; color:#a9b1d6;">💰 Net Receivable</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">Rs. {grand_total:,.0f}</div></div>""", unsafe_allow_html=True)
+                 cash_label = "Cash Received"
+                 cash_val = st.number_input(cash_label, min_value=0.0, step=100.0)
             
             st.write("")
-            if st.button("✅ Save & Print", type="primary", use_container_width=True):
+            btn_label = "✅ Save Purchase" if is_purchase else "✅ Save & Print"
+            
+            if st.button(btn_label, type="primary", use_container_width=True):
                 if customer_name and grand_total >= 0:
                     # Filter out empty rows
                     valid_items = df_display[df_display['Item Name'].str.strip() != ""]
                     
-                    # Logic Change: Allow if Cash Received > 0 even if no items
-                    if valid_items.empty and cash_received == 0:
-                        st.error("Please add at least one item or enter Cash Received.")
+                    # Logic: Allow if Cash > 0 even if no items
+                    if valid_items.empty and cash_val == 0:
+                        st.error("Please add at least one item or enter Cash amount.")
                     else:
-                        # If Cash Only, create dummy item for record
-                        if valid_items.empty and cash_received > 0:
+                        # If Cash Only, create dummy item
+                        if valid_items.empty and cash_val > 0:
                             valid_items = pd.DataFrame([{
-                                "Item Name": "Payment Received", 
+                                "Item Name": "Payment / Advance", 
                                 "Qty": 1, 
                                 "Rate": 0.0, 
                                 "Discount": 0.0, 
@@ -1647,42 +1786,73 @@ if menu == "⚡ Quick Invoice":
                                 "Total": 0.0
                             }])
                         
-                        # Save to DB
-                        success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
+                        # --- OPTIMIZATION: Prefetch Balance ---
+                        # Fetch Balance BEFORE saving to avoid reading the heavy Ledger sheet twice.
+                        try:
+                            # Use db connection directly or helper? 
+                            # Helper might be safer but let's try reading just the needed data if possible.
+                            # Re-using get_ledger_entries is fine but let's wrap in safe block
+                            inv_led_pre = db.get_ledger_entries(customer_name)
+                            if not inv_led_pre.empty:
+                                prev_bal_n = inv_led_pre['debit'].sum() - inv_led_pre['credit'].sum()
+                            else:
+                                prev_bal_n = 0.0
+                        except:
+                            prev_bal_n = 0.0
+
+                        # --- SAVE LOGIC ---
+                        success = False
+                        
+                        if is_purchase:
+                            # PURCHASE LOGIC
+                            success = db.record_purchase(next_inv, customer_name, valid_items, freight + misc, grand_total)
+                            
+                            if success:
+                                if cash_val > 0:
+                                    db.add_ledger_entry(customer_name, f"Cash Paid for Pur #{next_inv}", cash_val, 0.0, inv_date)
+                        else:
+                            # SALES LOGIC
+                            success = db.record_invoice(next_inv, customer_name, valid_items, freight, misc, grand_total)
+                            
+                            if success:
+                                if cash_val > 0:
+                                    # Ledger: Credit = Giver (Party gives cash)
+                                    db.add_ledger_entry(customer_name, f"Cash Payment for Inv #{next_inv}", 0.0, cash_val, inv_date)
                         
                         if success:
-                            # Record Cash Payment if any
-                            if cash_received > 0:
-                                db.add_ledger_entry(customer_name, f"Cash Payment for Inv #{next_inv}", 0.0, cash_received, inv_date)
+                            st.success(f"Transaction {next_inv} Saved Successfully!")
                             
-                            st.success(f"Invoice {next_inv} Saved Successfully!")
+                            # Refresh Cache next time
+                            if 'cached_next_inv' in st.session_state: del st.session_state.cached_next_inv
+                            if 'cached_next_pur' in st.session_state: del st.session_state.cached_next_pur
+
+                            # --- BALANCE CALCULATION (Local) ---
+                            # Previous Balance is what we fetched earlier (prev_bal_n).
+                            # Current Balance = Previous + Transaction Effect
                             
-                            # Fetch Balances for Invoice
-                            inv_led = db.get_ledger_entries(customer_name)
-                            cur_bal_n = 0.0
-                            if not inv_led.empty:
-                                cur_bal_n = inv_led['debit'].sum() - inv_led['credit'].sum()
-                            
-                            # Previous Balance logic:
-                            # Current Balance = Previous + GrandTotal - CashReceived
-                            # => Previous = Current - GrandTotal + CashReceived
-                            # (Wait, if we already added ledger entries for GrandTotal AND CashReceived, then Current represents the final state)
-                            # So Previous Balance is Current - (Total - Cash) ? No.
-                            # Previous Balance is strictly what it was BEFORE this transaction (invoice + cash).
-                            # So Previous = Current - GrandTotal + CashReceived
-                            prev_bal_n = cur_bal_n - grand_total + cash_received
+                            if is_purchase:
+                                # Purchase: Credit Client (Negative effect on our Receivables)
+                                # Balance = Receivables.
+                                # New Balance = Old Balance - PurchaseAmount + CashPaid
+                                cur_bal_n = prev_bal_n - grand_total + cash_val
+                            else:
+                                # Sale: Debit Client (Positive effect on Receivables)
+                                # New Balance = Old Balance + SaleAmount - CashReceived
+                                cur_bal_n = prev_bal_n + grand_total - cash_val
                             
                             # Generate PDF
                             pdf_bytes = create_sales_invoice_pdf(
                                 next_inv, customer_name, inv_date.strftime('%Y-%m-%d'), 
-                                valid_items, subtotal, freight, misc, grand_total, prev_bal_n, cur_bal_n, cash_received
+                                valid_items, subtotal, freight, misc, grand_total, prev_bal_n, cur_bal_n, cash_val,
+                                is_purchase=is_purchase
                             )
                             
                             # Show Download
+                            prefix_file = "Purchase_" if is_purchase else "Invoice_"
                             st.download_button(
-                                "📥 Download Invoice PDF", 
+                                "📥 Download PDF", 
                                 data=pdf_bytes, 
-                                file_name=f"Invoice_{next_inv}.pdf", 
+                                file_name=f"{prefix_file}{next_inv}.pdf", 
                                 mime="application/pdf", 
                                 type="primary",
                                 use_container_width=True
@@ -1693,7 +1863,7 @@ if menu == "⚡ Quick Invoice":
                             time.sleep(2)
                             st.rerun()
                 else:
-                    st.error("Invalid Customer or Total.")
+                    st.error("Invalid details or Total.")
 
     # --- TAB 2: INVOICE HISTORY ---
     with tab_hist:
@@ -1704,63 +1874,158 @@ if menu == "⚡ Quick Invoice":
              search_inv_input = st.text_input("Enter Invoice #", placeholder="e.g. INV-2026-001")
              
         if search_inv_input:
-             # Fetch Items
-             items_df = db.get_invoice_items(search_inv_input)
+             is_pur_search = "PUR-" in search_inv_input.upper()
              
-             if not items_df.empty:
-                 st.success(f"✅ Found {len(items_df)} items for {search_inv_input}")
+             if is_pur_search:
+                 # --- PURCHASE SEARCH ---
+                 items_df = db.get_purchase_items(search_inv_input)
                  
-                 # Extract Meta Data from first row
-                 first_row = items_df.iloc[0]
-                 cust_name_h = first_row['customer_name']
-                 date_h = first_row['sale_date']
+                 if not items_df.empty:
+                     st.success(f"✅ Found {len(items_df)} items for {search_inv_input}")
+                     
+                     first_row = items_df.iloc[0]
+                     supplier_name = first_row.get('supplier_name', 'Unknown')
+                     date_h = first_row.get('purchase_date', '')
+                     
+                     st.markdown(f"**Supplier:** {supplier_name} | **Date:** {date_h}")
+                     
+                     # Columns in Purchases: id, purchase_id, supplier_name, item_name, quantity_bought, unit_cost, total_amount, purchase_date
+                     disp_ph = items_df[['item_name', 'quantity_bought', 'unit_cost', 'total_amount']].copy()
+                     disp_ph.columns = ['Item Name', 'Qty', 'Cost', 'Total']
+                     
+                     st.dataframe(disp_ph, use_container_width=True)
+                     
+                     # Totals
+                     subtotal_h = disp_ph['Total'].sum()
+                     ledger_total = db.get_purchase_total_from_ledger(search_inv_input)
+                     cash_paid_h = db.get_cash_paid_for_purchase(search_inv_input)
+                     
+                     # Display Extras
+                     st.divider()
+                     h_c1, h_c2 = st.columns([3, 1])
+                     with h_c2:
+                         st.markdown(f"**Subtotal:** Rs. {subtotal_h:,.2f}")
+                         
+                         diff = ledger_total - subtotal_h
+                         if diff > 0:
+                             st.markdown(f"**Freight/Misc:** Rs. {diff:,.2f}")
+                             
+                         st.markdown(f"### Total Payable: Rs. {ledger_total:,.0f}")
+                         
+                         if cash_paid_h > 0:
+                             st.markdown(f"**Cash Paid:** Rs. {cash_paid_h:,.0f}")
+                             
+                         # --- PDF DOWNLOAD FOR PURCHASE ---
+                         # Calculate mock balances for reprint
+                         # We don't have historic balance snapshots easily. 
+                         # Approximation:
+                         # Current Ledger Balance for Supplier
+                         led_items = db.get_ledger_entries(supplier_name)
+                         cur_bal_p = 0.0
+                         if not led_items.empty:
+                             # Debit - Credit. For Supplier, Credit is what we owe.
+                             # If we owe, Balance is negative (from perspective of Assets).
+                             # But usually shown as positive "Payable".
+                             cur_bal_p = led_items['debit'].sum() - led_items['credit'].sum()
+                             
+                         # For Purchase Invoice PDF:
+                         # Previous Balance = Current Balance (Post-transaction) - Effect of this transaction
+                         # Effect of Purchase: Adds to Credit (makes balance more negative / increases payable)
+                         # Effect of Cash Paid: Adds to Debit (makes balance less negative / decreases payable)
+                         # So: Current = Previous - PurchaseTotal + CashPaid
+                         # => Previous = Current + PurchaseTotal - CashPaid
+                         
+                         prev_bal_p = cur_bal_p + ledger_total - cash_paid_h
+                         
+                         # Map columns for PDF
+                         pdf_items = disp_ph.copy()
+                         pdf_items.columns = ['Item Name', 'Qty', 'Cost', 'Total'] # create_sales_invoice_pdf expects 'Rate' but we can map 'Cost'->'Rate/Cost'
+                         # Actually create_sales_invoice_pdf uses row['Rate'] or row['Cost']?
+                         # Let's check the function. It uses row['Rate'] usually. 
+                         # Let's rename 'Cost' to 'Rate' for the PDF function compatibility
+                         pdf_items = pdf_items.rename(columns={'Cost': 'Rate'})
+                         # It also needs 'Return Qty' and 'Discount' if they exist, or fill 0
+                         pdf_items['Return Qty'] = 0
+                         pdf_items['Discount'] = 0
+                         
+                         pdf_bytes = create_sales_invoice_pdf(
+                             search_inv_input, supplier_name, date_h, 
+                             pdf_items, subtotal_h, diff, 0.0, ledger_total, prev_bal_p, cur_bal_p, cash_paid_h,
+                             is_purchase=True
+                         )
+                         
+                         st.download_button(
+                            "📥 Download Purchase PDF",
+                            data=pdf_bytes,
+                            file_name=f"Purchase_{search_inv_input}.pdf",
+                            mime="application/pdf",
+                            type="primary",
+                            use_container_width=True
+                         )
+                 else:
+                     st.warning("No purchase found with this ID.")
+                     
+             else:
+                 # --- SALES SEARCH (Existing Logic) ---
+                 items_df = db.get_invoice_items(search_inv_input)
                  
-                 # Display Meta
-                 st.markdown(f"**Customer:** {cust_name_h} | **Date:** {date_h}")
-                 
-                 # Prepare Display DF
-                 # Columns in Sales: id, invoice_id, customer_name, item_name, quantity_sold, sale_price, return_quantity, total_amount, sale_date
-                 disp_ph = items_df[['item_name', 'quantity_sold', 'sale_price', 'return_quantity', 'total_amount']].copy()
-                 disp_ph.columns = ['Item Name', 'Qty', 'Rate', 'Return Qty', 'Total']
-                 
-                 st.dataframe(disp_ph, use_container_width=True)
-                 
-                 # Calculations
-                 subtotal_h = disp_ph['Total'].sum()
-                 
-                 # Try to get Grand Total from Ledger to infer Freight/Misc
-                 ledger_total = db.get_invoice_total_from_ledger(search_inv_input)
-                 
-                 # Fetch Cash Received if any
-                 cash_received_h = db.get_cash_received_for_invoice(search_inv_input)
-                 
-                 # ADD TO TABLE: specific request to show cash received in table
-                 if cash_received_h > 0:
-                     # Create a row for Cash Received
-                     cr_row = pd.DataFrame([{
-                         'Item Name': "💰 **Cash Received**",
-                         'Qty': 0,
-                         'Rate': 0,
-                         'Return Qty': 0,
-                         'Total': cash_received_h 
-                     }])
-                     disp_ph = pd.concat([disp_ph, cr_row], ignore_index=True)
+                 if not items_df.empty:
+                     st.success(f"✅ Found {len(items_df)} items for {search_inv_input}")
+                     
+                     # Extract Meta Data from first row
+                     first_row = items_df.iloc[0]
+                     cust_name_h = first_row['customer_name']
+                     date_h = first_row['sale_date']
+                     
+                     # Display Meta
+                     st.markdown(f"**Customer:** {cust_name_h} | **Date:** {date_h}")
+                     
+                     # Prepare Display DF
+                     # Columns in Sales: id, invoice_id, customer_name, item_name, quantity_sold, sale_price, return_quantity, total_amount, sale_date
+                     disp_ph = items_df[['item_name', 'quantity_sold', 'sale_price', 'return_quantity', 'total_amount']].copy()
+                     disp_ph.columns = ['Item Name', 'Qty', 'Rate', 'Return Qty', 'Total']
+                     
+                     st.dataframe(disp_ph, use_container_width=True)
+                     
+                     # Calculations
+                     subtotal_h = disp_ph['Total'].sum()
+                     
+                     # Try to get Grand Total from Ledger to infer Freight/Misc
+                     ledger_total = db.get_invoice_total_from_ledger(search_inv_input)
+                     
+                     # Fetch Cash Received if any
+                     cash_received_h = db.get_cash_received_for_invoice(search_inv_input)
+                     
+                     # ADD TO TABLE: specific request to show cash received in table
+                     if cash_received_h > 0:
+                         # Create a row for Cash Received
+                         cr_row = pd.DataFrame([{
+                             'Item Name': "💰 **Cash Received**",
+                             'Qty': 0,
+                             'Rate': 0,
+                             'Return Qty': 0,
+                             'Total': cash_received_h 
+                         }])
+                         disp_ph = pd.concat([disp_ph, cr_row], ignore_index=True)
+                         # Update table display to show cash row? User asked for visibility.
+                         # Rerendering dataframe with cash row is better.
+                         st.dataframe(disp_ph, use_container_width=True)
 
-                 
-                 # Inferred Extras
-                 diff = 0.0
-                 if ledger_total > subtotal_h:
-                     diff = ledger_total - subtotal_h
                      
-                 # Display Totals
-                 st.divider()
-                 h_c1, h_c2 = st.columns([3, 1])
-                 with h_c2:
-                     st.markdown(f"**Subtotal:** Rs. {subtotal_h:,.2f}")
-                     if diff > 0:
-                         st.markdown(f"**Freight/Misc:** Rs. {diff:,.2f}")
-                     
-                     st.markdown(f"### Total: Rs. {ledger_total:,.0f}")
+                     # Inferred Extras
+                     diff = 0.0
+                     if ledger_total > subtotal_h:
+                         diff = ledger_total - subtotal_h
+                         
+                     # Display Totals
+                     st.divider()
+                     h_c1, h_c2 = st.columns([3, 1])
+                     with h_c2:
+                         st.markdown(f"**Subtotal:** Rs. {subtotal_h:,.2f}")
+                         if diff > 0:
+                             st.markdown(f"**Freight/Misc:** Rs. {diff:,.2f}")
+                         
+                         st.markdown(f"### Total: Rs. {ledger_total:,.0f}")
                      
                      if cash_received_h > 0:
                          # NEW PROMINENT DISPLAY
@@ -1809,8 +2074,8 @@ if menu == "⚡ Quick Invoice":
                      # Ends the first block above
 
 
-             else:
-                 st.info("No invoice found with that number. Please check the ID (e.g., INV-2026-001).")
+                 else:
+                     st.info("No invoice found with that number. Please check the ID (e.g., INV-2026-001).")
 # --- TAB: ACCOUNTS LEDGER ---
 
 
@@ -2064,7 +2329,7 @@ elif menu == "📦 Product Inventory":
     st.title("📦 Product Inventory")
     
     # Create Tabs
-    tab1, tab2 = st.tabs(["📦 Stock Management", "💰 Stock Valuation"])
+    tab1, tab2, tab3 = st.tabs(["📦 Stock Management", "📜 Product Ledger", "💰 Stock Valuation"])
 
     # TAB 1: STOCK MANAGEMENT
     with tab1:
@@ -2133,8 +2398,59 @@ elif menu == "📦 Product Inventory":
         else:
             st.info("Inventory Empty.")
 
-    # TAB 2: STOCK VALUATION
+    # TAB 2: PRODUCT LEDGER
     with tab2:
+        st.header("📜 Product History / Ledger")
+        
+        full_inv = db.get_inventory()
+        if not full_inv.empty:
+            # Select Product
+            # Map name -> ID
+            inv_opts = full_inv.set_index('id')['item_name'].to_dict()
+            inv_opts_rev = {f"{v} (ID: {k})": k for k, v in inv_opts.items()}
+            
+            sel_prod_Label = st.selectbox("Select Product", options=list(inv_opts_rev.keys()))
+            
+            if sel_prod_Label:
+                sel_id = inv_opts_rev[sel_prod_Label]
+                sel_name = inv_opts[sel_id]
+                
+                # Fetch Logs
+                logs = db.get_inventory_logs(sel_id)
+                
+                if not logs.empty:
+                    # Metrics
+                    total_in = logs[logs['change'] > 0]['change'].sum()
+                    total_out = abs(logs[logs['change'] < 0]['change'].sum())
+                    
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Total Added", f"{total_in} Units")
+                    m2.metric("Total Sold/Removed", f"{total_out} Units")
+                    # Net flow?
+                    
+                    st.dataframe(
+                        logs[['timestamp', 'change', 'reason', 'reference', 'description']],
+                        use_container_width=True,
+                        column_config={
+                            "timestamp": "Date/Time",
+                            "change": st.column_config.NumberColumn("Change", format="%+d"),
+                            "reason": "Type",
+                            "reference": "Reference",
+                            "description": "Details"
+                        }
+                    )
+                    
+                    # PDF Download
+                    pdf_data = create_inventory_ledger_pdf(sel_name, logs)
+                    st.download_button("📥 Download Product Ledger (PDF)", data=pdf_data, file_name=f"StockLedger_{sel_name}.pdf", mime="application/pdf")
+                    
+                else:
+                    st.info("No history logs found for this item.")
+        else:
+            st.warning("No inventory items found.")
+
+    # TAB 3: STOCK VALUATION
+    with tab3:
         render_stock_valuation_table(db)
 
 
@@ -2521,7 +2837,15 @@ elif menu == "👥 Partners & Ledger":
         # Add Entry Form
         with st.expander("➕ Add Transaction", expanded=False):
              # TOGGLE FOR STOCK ITEM (Correctly placed outside callback)
-             is_stock = st.checkbox("📦 Select Product Category?", key=f"is_stock_{current_party}")
+             col_txn_type, col_stock_check = st.columns([1, 1])
+             with col_txn_type:
+                 txn_mode = st.radio("Transaction Mode", ["Sale (Bill)", "Purchase (Stock In)"], horizontal=True, key=f"txn_mode_{current_party}")
+             with col_stock_check:
+                 st.write("")
+                 st.write("")
+                 is_stock = st.checkbox("📦 Select Product Category?", key=f"is_stock_{current_party}")
+             
+             is_purchase_txn = "Purchase" in txn_mode
              
              selected_category = None
              if is_stock:
@@ -2534,9 +2858,11 @@ elif menu == "👥 Partners & Ledger":
                   d_val = st.session_state.get(f"d_{current_party}")
                   desc_val = st.session_state.get(f"desc_{current_party}", "")
                   
-                  # Retrieve Stock Selection from State
+                  # Retrieve Stock Selection & Mode from State
                   is_stock_val = st.session_state.get(f"is_stock_{current_party}", False)
                   sel_cat_val = st.session_state.get(f"sel_stock_{current_party}", "Choose...")
+                  txn_mode_val = st.session_state.get(f"txn_mode_{current_party}", "Sale")
+                  is_pur = "Purchase" in txn_mode_val
 
                   q_curr = st.session_state.get(f"q_{current_party}", 0)
                   r_curr = st.session_state.get(f"r_{current_party}", 0.0)
@@ -2546,38 +2872,54 @@ elif menu == "👥 Partners & Ledger":
                   
                   entries_added = 0
                   
-                  # 1. Process BILL (Debit)
+                  # 1. Process BILL
+                  # Sale: Bill = Debit (They owe us)
+                  # Purchase: Bill = Credit (We owe them)
                   if bill_amt > 0:
                       bill_desc = desc_val if desc_val else "Bill"
                       
-                      # Special Handling for Category Sale
+                      # Prefix for Purchase
+                      if is_pur:
+                          bill_desc = f"Purchase: {bill_desc}"
+                      
+                      # Special Handling for Category Sale (only if Stock checked)
                       if is_stock_val and sel_cat_val and sel_cat_val != "Choose...":
                           # Override description if empty or generic
                           if not desc_val: 
-                              bill_desc = f"Sale: {sel_cat_val}"
+                              bill_desc = f"{'Purchase' if is_pur else 'Sale'}: {sel_cat_val}"
                           else:
                                # Append category so reports can pick it up
-                               bill_desc = f"{desc_val} ({sel_cat_val})"
+                               bill_desc = f"{bill_desc} ({sel_cat_val})"
                                
-                          # We do NOT use record_ledger_sale anymore because we are not deducting specific stock.
-                          # Just record the ledger entry with quantities.
-                          db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
+                      # Determine Debit/Credit based on Mode
+                      if is_pur:
+                          # Purchase: Credit the party (We owe)
+                          db.add_ledger_entry(current_party, bill_desc, 0.0, bill_amt, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
                       else:
-                          # Standard Ledger Entry
+                          # Sale: Debit the party (They owe)
                           db.add_ledger_entry(current_party, bill_desc, bill_amt, 0.0, d_val, quantity=q_curr, rate=r_curr, discount=disc_curr)
                           
                       entries_added += 1
                       
-                  # 2. Process CASH RECEIVED (Credit)
+                  # 2. Process CASH / PAYMENT
+                  # Sale: Cash Received = Credit (They paid us)
+                  # Purchase: Cash Paid = Debit (We paid them)
                   if cash_amt > 0:
-                      cash_desc = "Cash Received"
+                      cash_desc = "Cash Paid" if is_pur else "Cash Received"
                       # If both added, maybe clarify description
                       if bill_amt > 0 and desc_val:
                            cash_desc = f"Payment for: {desc_val}"
                       elif desc_val:
                            cash_desc = desc_val
+                           if is_pur and not cash_desc.startswith("Payment"): cash_desc = f"Paid: {cash_desc}"
                            
-                      db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0)
+                      if is_pur:
+                          # We paid them -> Debit them (Reduces liability)
+                          db.add_ledger_entry(current_party, cash_desc, cash_amt, 0.0, d_val, quantity=0, rate=0.0, discount=0.0)
+                      else:
+                          # They paid us -> Credit them (Reduces asset)
+                          db.add_ledger_entry(current_party, cash_desc, 0.0, cash_amt, d_val, quantity=0, rate=0.0, discount=0.0)
+                          
                       entries_added += 1
                   
                   if entries_added > 0:
@@ -2592,7 +2934,7 @@ elif menu == "👥 Partners & Ledger":
                       # Reset Stock Toggle if desired? Maybe keep it.
                       # st.session_state[f"is_stock_{current_party}"] = False 
                   else:
-                      st.session_state['tx_msg'] = ('error', "Please enter a Bill Amount or Cash Received.")
+                      st.session_state['tx_msg'] = ('error', "Please enter a Bill Amount or Cash Amount.")
 
              # Helper for auto-calculation
              def update_calc():
@@ -2611,8 +2953,13 @@ elif menu == "👥 Partners & Ledger":
              
              # 2. Row 2: Bill & Cash
              c4, c5 = st.columns(2)
-             c4.number_input("Values for Total Bill (Debit)", min_value=0.0, step=100.0, key=f"bill_{current_party}")
-             c5.number_input("Cash Received (Credit)", min_value=0.0, step=100.0, key=f"cash_{current_party}")
+             
+             # Dynamic Labels based on Mode
+             lbl_bill = "Total Payable (Credit)" if is_purchase_txn else "Values for Total Bill (Debit)"
+             lbl_cash = "Cash Paid (Debit)" if is_purchase_txn else "Cash Received (Credit)"
+             
+             c4.number_input(lbl_bill, min_value=0.0, step=100.0, key=f"bill_{current_party}")
+             c5.number_input(lbl_cash, min_value=0.0, step=100.0, key=f"cash_{current_party}")
 
              # 3. Row 3: Meta
              c6, c7 = st.columns([1, 2])

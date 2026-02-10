@@ -419,7 +419,7 @@ class DatabaseManager:
             return pd.DataFrame(columns=["id", "item_name", "category", "import_date", "quantity", "cost_price", "selling_price"])
         return df
 
-    def update_inventory_item(self, item_id, new_qty, new_cost, new_sell):
+    def update_inventory_item(self, item_id, new_qty, new_cost, new_sell, log_data=None):
         df = self._read_data("Inventory")
         if df.empty: return False
         
@@ -427,12 +427,75 @@ class DatabaseManager:
         if not idx: return False
         idx = idx[0]
         
+        # Calculate change for logging if not explicit
+        old_qty = int(df.at[idx, 'quantity'])
+        
         df.at[idx, 'quantity'] = int(new_qty)
         df.at[idx, 'cost_price'] = float(new_cost)
         df.at[idx, 'selling_price'] = float(new_sell)
         
         self._write_data("Inventory", df)
+        
+        # Log Change
+        if log_data:
+            self.log_inventory_change(item_id, df.at[idx, 'item_name'], 
+                                      log_data.get('change', new_qty - old_qty), 
+                                      log_data.get('reason', 'Update'), 
+                                      log_data.get('reference', ''), 
+                                      log_data.get('description', 'Manual Update'))
+        
         return True
+
+    def log_inventory_change(self, item_id, item_name, change_qty, reason, reference, description):
+        """
+        Logs an inventory movement to 'InventoryLogs' sheet.
+        """
+        logs_df = self._read_data("InventoryLogs")
+        
+        new_id = self._get_next_id(logs_df)
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        new_log = pd.DataFrame([{
+            "id": new_id,
+            "timestamp": timestamp,
+            "item_id": item_id,
+            "item_name": item_name,
+            "change": change_qty,
+            "reason": reason,
+            "reference": reference,
+            "description": description
+        }])
+        
+        if logs_df.empty:
+            updated_logs = new_log
+        else:
+            updated_logs = pd.concat([logs_df, new_log], ignore_index=True)
+            
+        self._write_data("InventoryLogs", updated_logs)
+
+    def get_inventory_logs(self, item_id):
+        """
+        Get logs for a specific item, sorted newest first.
+        """
+        logs_df = self._read_data("InventoryLogs")
+        if logs_df.empty:
+            return pd.DataFrame(columns=["timestamp", "change", "reason", "reference", "description"])
+            
+        # Robust Filter: Handle "1.0" vs "1" mismatch
+        def clean_id(x):
+            return str(x).replace('.0', '').strip()
+            
+        target_id = clean_id(item_id)
+        
+        # Apply filter
+        mask = logs_df['item_id'].astype(str).apply(clean_id) == target_id
+        item_logs = logs_df[mask]
+        
+        if item_logs.empty:
+            return pd.DataFrame(columns=["timestamp", "change", "reason", "reference", "description"])
+            
+        # Sort by ID descending (proxy for time) or timestamp
+        return item_logs.sort_values(by='id', ascending=False)
 
     def delete_inventory_item(self, item_id):
         df = self._read_data("Inventory")
@@ -598,6 +661,113 @@ class DatabaseManager:
         
         return True
 
+    def get_next_purchase_number(self):
+        """
+        Generates the next Purchase # based on Purchase data.
+        Format: PUR-YYYY-XXX (e.g., PUR-2026-001)
+        """
+        df = self._read_data("Purchases")
+        year = datetime.now().year
+        prefix = f"PUR-{year}-"
+        
+        if df.empty or 'purchase_id' not in df.columns:
+            return f"{prefix}001"
+            
+        invoices = df['purchase_id'].dropna().astype(str)
+        current_year_invs = invoices[invoices.str.startswith(prefix)]
+        
+        if current_year_invs.empty:
+            return f"{prefix}001"
+            
+        try:
+             max_num = current_year_invs.apply(lambda x: int(x.split('-')[-1])).max()
+             next_num = max_num + 1
+             return f"{prefix}{next_num:03d}"
+        except:
+             return f"{prefix}001"
+
+    def record_purchase(self, purchase_id, supplier_name, items_df, extra_costs, grand_total):
+        """
+        Records a purchase from a client/supplier.
+        1. Saves to Purchases table.
+        2. Adds to Inventory (if match).
+        3. Credits Ledger (We owe them).
+        """
+        # 1. Update Purchases Table
+        purchases_df = self._read_data("Purchases")
+        cols = ["id", "purchase_id", "supplier_name", "item_name", "quantity_bought", 
+                "unit_cost", "total_amount", "purchase_date"]
+                
+        if purchases_df.empty:
+            purchases_df = pd.DataFrame(columns=cols)
+            
+        new_rows = []
+        date_now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        start_id = self._get_next_id(purchases_df)
+        
+        # Prepare Inventory Data
+        inv_df = self._read_data("Inventory")
+        inv_changed = False
+        
+        for idx, row in items_df.iterrows():
+            item_name = row['Item Name']
+            qty = float(row['Qty'])
+            cost = float(row['Rate']) # In purchase context, Rate is Cost
+            row_total = row['Total']
+            
+            # Add to Purchases Rows
+            new_rows.append({
+                "id": start_id + idx,
+                "purchase_id": purchase_id,
+                "supplier_name": supplier_name,
+                "item_name": item_name,
+                "quantity_bought": qty,
+                "unit_cost": cost,
+                "total_amount": row_total,
+                "purchase_date": date_now
+            })
+            
+            # 2. Inventory Addition
+            if not inv_df.empty:
+                match_indices = inv_df.index[inv_df['item_name'].str.lower() == item_name.strip().lower()].tolist()
+                
+                if match_indices:
+                     i_idx = match_indices[0]
+                     curr_stock = inv_df.at[i_idx, 'quantity']
+                     # ADD Stock
+                     new_stock = curr_stock + qty
+                     inv_df.at[i_idx, 'quantity'] = new_stock
+                     
+                     # Optional: Update Cost Price? 
+                     # Users often want Weighted Average or Last Purchase Price.
+                     # Let's update Cost Price to this latest purchase price for simplicity/relevance.
+                     if cost > 0:
+                        inv_df.at[i_idx, 'cost_price'] = cost
+                        
+                     inv_changed = True
+                else:
+                    # Item doesn't exist in Stock? 
+                    # Maybe Auto-Create or just Skip?
+                    # For now, we skip auto-create to avoid polluting Inventory with random names.
+                    # User generally selects from existing Categories/Items or adds new item first.
+                    pass
+
+        if new_rows:
+            new_purchases_df = pd.DataFrame(new_rows)
+            updated_purchases = pd.concat([purchases_df, new_purchases_df], ignore_index=True)
+            self._write_data("Purchases", updated_purchases)
+            
+        if inv_changed:
+            self._write_data("Inventory", inv_df)
+            
+        # 3. Ledger Update
+        # Credit the Supplier (We owe them)
+        desc = f"Purchase #{purchase_id}"
+        # Ledger: Credit = Giver (Supplier gives us goods) -> Positive Amount in Credit column
+        self.add_ledger_entry(supplier_name, desc, 0.0, grand_total, datetime.now().date())
+        
+        return True
+
     def get_invoice_items(self, invoice_id):
         """Retrieve all items sold in a specific invoice."""
         sales_df = self._read_data("Sales")
@@ -636,6 +806,44 @@ class DatabaseManager:
         
         if not matches.empty:
             return matches['credit'].sum()
+        return 0.0
+
+    # --- PURCHASE HISTORY HELPERS ---
+    def get_purchase_items(self, purchase_id):
+        """Retrieve items for a specific purchase ID."""
+        purchases_df = self._read_data("Purchases")
+        if purchases_df.empty:
+            return pd.DataFrame()
+            
+        if 'purchase_id' in purchases_df.columns:
+            items = purchases_df[purchases_df['purchase_id'].astype(str) == str(purchase_id)]
+            return items
+        return pd.DataFrame()
+
+    def get_purchase_total_from_ledger(self, purchase_id):
+        """Fetch total amount for a purchase from Ledger (Credit side)."""
+        ledger = self._read_data("Ledger")
+        if ledger.empty: return 0.0
+        
+        # Look for "Purchase #{purchase_id}" or similar pattern
+        # Our record_purchase uses: description=f"Purchase #{purchase_id}"
+        matches = ledger[ledger['description'].astype(str).str.contains(f"Purchase #{purchase_id}", regex=False)]
+        
+        if not matches.empty:
+            # For Purchase, amount we owe is Credit
+            return matches['credit'].sum()
+        return 0.0
+
+    def get_cash_paid_for_purchase(self, purchase_id):
+        """Fetch cash paid recorded for a purchase (Debit side)."""
+        ledger = self._read_data("Ledger")
+        if ledger.empty: return 0.0
+        
+        # Pattern: "Cash Paid for Pur #{purchase_id}"
+        matches = ledger[ledger['description'].astype(str).str.contains(f"Cash Paid for Pur #{purchase_id}", regex=False)]
+        
+        if not matches.empty:
+            return matches['debit'].sum()
         return 0.0
 
     def get_revenue_analytics(self):
