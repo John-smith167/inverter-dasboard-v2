@@ -267,9 +267,9 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     pdf.cell(45, 8, "Item / Description", 1, 0, 'C', 1)
     pdf.cell(10, 8, "Qty", 1, 0, 'C', 1)
     pdf.cell(18, 8, "Rate", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Debit", 1, 0, 'C', 1)
+    pdf.cell(23, 8, "Total Bill", 1, 0, 'C', 1)
     pdf.cell(15, 8, "Discount", 1, 0, 'C', 1)
-    pdf.cell(23, 8, "Credit", 1, 0, 'C', 1)
+    pdf.cell(23, 8, "Cash Received", 1, 0, 'C', 1)
     pdf.cell(28, 8, "Balance", 1, 1, 'C', 1)
     
     # --- TABLE ROWS ---
@@ -321,11 +321,11 @@ def create_ledger_pdf(party_name, ledger_df, final_balance):
     total_debit = ledger_df['debit'].sum()
     total_credit = ledger_df['credit'].sum()
     
-    pdf.cell(50, 6, "Total Debit:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Bill:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_debit:,.0f}", 0, 1, 'R')
     
     pdf.set_x(100)
-    pdf.cell(50, 6, "Total Credit:", 0, 0, 'R')
+    pdf.cell(50, 6, "Total Cash Received:", 0, 0, 'R')
     pdf.cell(40, 6, f"{total_credit:,.0f}", 0, 1, 'R')
     
     pdf.line(110, pdf.get_y()+1, 200, pdf.get_y()+1)
@@ -619,7 +619,7 @@ def create_sales_invoice_pdf(invoice_no, customer, date_val, items_df, subtotal,
             pdf.cell(45, 7, "Extra Costs:", 0, 0, 'R')
             pdf.cell(35, 7, f"{extras:,.2f}", 1, 1, 'R')
 
-        pdf.cell(45, 7, "Grand Total:", 0, 0, 'R')
+        pdf.cell(45, 7, "Total Bill:", 0, 0, 'R')
         pdf.cell(35, 7, f"{grand_total:,.2f}", 1, 1, 'R')
 
     if cash_received > 0:
@@ -1550,7 +1550,7 @@ with st.sidebar:
     st.markdown("---")
     
     # Navigation Pills
-    options = ["⚡ Quick Invoice", "🔧 Repair Center", "👥 Partners & Ledger", "📦 Product Inventory", "👷 Staff & Payroll", "📊 Business Reports"]
+    options = ["⚡ Quick Invoice", "👥 Partners & Ledger", "📦 Product Inventory", "👷 Staff & Payroll", "📊 Business Reports"]
     
     # Determine index safely
     try:
@@ -2076,254 +2076,6 @@ if menu == "⚡ Quick Invoice":
 
                  else:
                      st.info("No invoice found with that number. Please check the ID (e.g., INV-2026-001).")
-# --- TAB: ACCOUNTS LEDGER ---
-
-
-# --- TAB: CREATE JOB (WIZARD) ---
-# --- TAB: REPAIR CENTER ---
-elif menu == "🔧 Repair Center":
-    st.title("🔧 Repair Center")
-    
-    tab1, tab2, tab3 = st.tabs(["➕ New Job", "🛠️ Active Jobs", "📜 History"])
-    
-    # TAB 1: NEW JOB (Legacy Create Job Wizard)
-    with tab1:
-        st.subheader("➕ New Job Wizard")
-        
-        # Initialize Wizard State
-        if 'wiz_step' not in st.session_state:
-            st.session_state.wiz_step = 1
-            st.session_state.wiz_data = {}
-
-        # Progress Bar
-        steps = ["Client", "Device", "Photo", "Review"]
-        curr = st.session_state.wiz_step
-        st.progress(curr / 4)
-        st.caption(f"Step {curr} of 4: {steps[curr-1]}")
-        
-        # Container for Wizard
-        with st.container(border=True):
-            
-            # STEP 1: CLIENT
-            if curr == 1:
-                st.subheader("1. Client Details")
-                c1, c2 = st.columns(2)
-                name = c1.text_input("Full Name", value=st.session_state.wiz_data.get('name',''))
-                phone = c2.text_input("Phone Number", value=st.session_state.wiz_data.get('phone',''))
-                
-                if st.button("Next ➡", type="primary"):
-                    if name:
-                        st.session_state.wiz_data['name'] = name
-                        st.session_state.wiz_data['phone'] = phone
-                        st.session_state.wiz_step = 2
-                        st.rerun()
-                    else:
-                        st.error("Client Name is required.")
-
-            # STEP 2: DEVICE
-            elif curr == 2:
-                st.subheader("2. Device Information")
-                c1, c2 = st.columns(2)
-                model = c1.text_input("Device Model", value=st.session_state.wiz_data.get('model',''))
-                due = c2.date_input("Due Date", min_value=datetime.now().date())
-                issue = st.text_area("Issue Description", value=st.session_state.wiz_data.get('issue',''))
-                
-                emps = db.get_employee_names()
-                assign = st.selectbox("Assign Technician", emps if emps else ["Unassigned"])
-                
-                c_back, c_next = st.columns([1, 1])
-                if c_back.button("⬅ Back"):
-                    st.session_state.wiz_step = 1
-                    st.rerun()
-                if c_next.button("Next ➡", type="primary"):
-                    if model and issue:
-                        st.session_state.wiz_data['model'] = model
-                        st.session_state.wiz_data['due'] = due
-                        st.session_state.wiz_data['issue'] = issue
-                        st.session_state.wiz_data['assign'] = assign
-                        st.session_state.wiz_step = 3
-                        st.rerun()
-                    else:
-                        st.error("Model and Issue are required.")
-
-            # STEP 3: PHOTO (Placeholder)
-            elif curr == 3:
-                st.subheader("3. Intake Photos")
-                st.info("Upload functionality connected to secure storage.")
-                uploaded = st.file_uploader("Upload Device Photo (Optional)", type=['png', 'jpg'])
-                
-                c_back, c_next = st.columns([1, 1])
-                if c_back.button("⬅ Back"):
-                    st.session_state.wiz_step = 2
-                    st.rerun()
-                if c_next.button("Next ➡", type="primary"):
-                    st.session_state.wiz_step = 4
-                    st.rerun()
-
-            # STEP 4: REVIEW
-            elif curr == 4:
-                st.subheader("4. Review & Launch")
-                data = st.session_state.wiz_data
-                
-                st.markdown(f"""
-                **Client:** {data.get('name')} ({data.get('phone')})  
-                **Device:** {data.get('model')}  
-                **Issue:** {data.get('issue')}  
-                **Technician:** {data.get('assign')}  
-                **Due:** {data.get('due')}
-                """)
-                
-                c_back, c_submit = st.columns([1, 1])
-                if c_back.button("⬅ Back"):
-                    st.session_state.wiz_step = 3
-                    st.rerun()
-                
-                if c_submit.button("Open Job", type="primary"):
-                    db.add_repair(
-                        data['name'], 
-                        data['model'], 
-                        data['issue'], 
-                        "Pending", 
-                        data['phone'], 
-                        data['assign'], 
-                        data['due']
-                    )
-                    # QR CODE GENERATION
-                    qr_data = f"JOB-{db.get_active_repairs().iloc[-1]['id']}" 
-                    last_id = db.get_active_repairs()['id'].max()
-                    
-                    qr = qrcode.QRCode(version=1, box_size=10, border=5)
-                    qr.add_data(f"JOB-{last_id}")
-                    qr.make(fit=True)
-                    img = qr.make_image(fill_color="black", back_color="white")
-                    
-                    # Convert to bytes for streamlit
-                    buf = BytesIO()
-                    img.save(buf)
-                    byte_im = buf.getvalue()
-                    
-                    st.image(byte_im, caption="🖨️ Print Label", width=200)
-                    
-                    st.success("Job Created Successfully!")
-                    # Reset
-                    st.session_state.wiz_step = 1
-                    st.session_state.wiz_data = {}
-                    
-                    if st.button("Start New Job"):
-                        st.rerun()
-
-    # TAB 2: ACTIVE REPAIRS
-    with tab2:
-        st.subheader("🛠️ Active Jobs & Billing")
-        
-        # Check for download trigger from dialog
-        if 'download_invoice' in st.session_state:
-            dl = st.session_state['download_invoice']
-            st.success("Invoice Ready!")
-            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf", key="dl_btn_active")
-            if st.button("Clear Notification", key="clear_notif_active"): 
-                del st.session_state['download_invoice']
-                st.rerun()
-
-        # Scan to Open (Search)
-        search_qr = st.text_input("📷 Scan QR / Enter Job ID (e.g., JOB-123)", key="qr_search")
-        
-        jobs = db.get_active_repairs()
-        
-        if not jobs.empty:
-            # Filter Logic
-            if search_qr:
-                # Extract number if format is JOB-123
-                clean_search = search_qr.upper().replace("JOB-", "").strip()
-                # Search in ID or Client Name
-                jobs = jobs[jobs['id'].astype(str) == clean_search]
-                if jobs.empty:
-                    st.warning("No job found with that ID.")
-
-            cols = st.columns(3)
-            today = datetime.now().date()
-            
-            for idx, row in jobs.iterrows():
-                with cols[idx % 3]:
-                    # Status Logic
-                    days_left = 99
-                    status_color = "#7aa2f7" # Blue
-                    is_late_flag = False
-                    
-                    if row['due_date']:
-                        try:
-                            d = datetime.strptime(row['due_date'], '%Y-%m-%d').date()
-                            days_left = (d - today).days
-                            
-                            if days_left < 0:
-                                status_color = "#eb4d4b" # Red (Overdue)
-                                is_late_flag = True
-                                badge_text = f"🚨 OVERDUE ({abs(days_left)} Days)"
-                            elif days_left <= 1: # Today or Tomorrow
-                                status_color = "#f0932b" # Orange (Urgent)
-                                badge_text = f"⚠️ Due Soon ({days_left} Days)"
-                            else:
-                                status_color = "#6ab04c" # Green (Safe)
-                                badge_text = f"⏱ {days_left} Days Left"
-                        except: 
-                            badge_text = "No Date"
-                    else:
-                        badge_text = "No Date"
-                    
-                    # Render Card
-                    st.markdown(f"""<div class="modern-card" style="border-top: 5px solid {status_color};"><div style="display:flex; justify-content:space-between;"><span style="font-weight:bold; color:#a9b1d6;">#{row['id']}</span><span style="background:{status_color}33; color:{status_color}; padding:2px 8px; border-radius:4px; font-size:0.8rem;">{row['status']}</span></div><div class="big-text" style="margin-top:10px;">{row['client_name']}</div><div class="sub-text">📱 {row['inverter_model']}</div><div class="sub-text">🔧 {row['assigned_to']}</div><div class="sub-text" style="margin-top:10px; font-weight:bold; color:{status_color};">{badge_text}</div></div>""", unsafe_allow_html=True)
-                    
-                    # ACTION: Open Dialog
-                    if st.button(f"Manage {row['client_name']}", key=f"btn_{row['id']}", use_container_width=True):
-                        p_data = row['parts_data'] if 'parts_data' in row and pd.notna(row['parts_data']) else "[]"
-                        l_data = row.get('labor_data', "[]")
-                        if pd.isna(l_data): l_data = "[]"
-                        repair_dialog(row['id'], row['client_name'], row['issue'], row['inverter_model'], row['used_parts'], row['service_cost'], row['phone_number'], row['total_cost'], p_data, l_data, row['assigned_to'])
-
-        else:
-            st.info("No active jobs. Good job team! 🌴")
-
-    # TAB 3: JOB HISTORY
-    with tab3:
-        st.subheader("📜 Completed Repairs")
-        
-        # Check for download trigger from any invoice generation
-        if 'download_invoice' in st.session_state:
-            dl = st.session_state['download_invoice']
-            st.success("Invoice Ready!")
-            st.download_button("📥 Download PDF", data=dl['data'], file_name=dl['name'], mime="application/pdf", key="dl_btn_history")
-            if st.button("Clear Notification", key="clear_notif_history"): 
-                del st.session_state['download_invoice']
-                st.rerun()
-
-        # Simple Search Filter
-        query = st.text_input("Search History", placeholder="Client, Device, Date...")
-        history = db.get_job_history()
-        
-        if not history.empty:
-            if query:
-               history = history[history.astype(str).apply(lambda x: x.str.contains(query, case=False)).any(axis=1)]
-            
-            # Consistent Card Grid for History
-            h_cols = st.columns(3)
-            for idx, row in history.iterrows():
-                with h_cols[idx % 3]:
-                    st.markdown(f"""<div class="modern-card" style="border-left: 4px solid #9ece6a;"><div class="big-text">{row['client_name']}</div><div class="sub-text">{row['inverter_model']}</div><div class="sub-text">Completed: {row['completion_date']}</div><div class="price-text" style="text-align:right; margin-top:10px;">Rs. {row['total_cost']:,.2f}</div></div>""", unsafe_allow_html=True)
-                    
-                    # Invoice Button
-                    if st.button("📄 Get Invoice", key=f"hist_inv_{row['id']}", use_container_width=True):
-                        # Reconstruct Data
-                        # We don't have individual parts prices, so we bundle.
-                        parts_bundle = [{'name': "Spare Parts & Consumables", 'price': row['parts_cost']}]
-                        pdf = create_invoice_pdf(row['client_name'], row['inverter_model'], parts_bundle, row['service_cost'], row['total_cost'], is_final=True)
-                        st.session_state['download_invoice'] = {
-                            'data': pdf,
-                            'name': f"Invoice_{row['client_name']}_Final.pdf"
-                        }
-                        st.rerun()
-        else:
-            st.info("No history found.")
-
 # --- TAB: INVENTORY ---
 elif menu == "📦 Product Inventory":
     st.title("📦 Product Inventory")
@@ -2507,71 +2259,6 @@ elif menu == "📊 Business Reports":
     
     st.divider()
 
-    # --- SECTION B: REPAIR CENTER OVERVIEW (New Design) ---
-    st.header("🔧 Repair Center Overview")
-    
-    # Filter Selection
-    filter_option = st.radio("Select Period", ["Today", "This Week", "This Month"], horizontal=True)
-    
-    # Calculate Metrics based on Filter
-    all_repairs = db.get_all_repairs()
-    
-    # Determine Date Range
-    now = datetime.now()
-    today = now.date()
-    start_filter_date = today
-    
-    if filter_option == "This Week":
-        start_filter_date = today - timedelta(days=today.weekday()) # Start of week (Monday)
-    elif filter_option == "This Month":
-        start_filter_date = date(today.year, today.month, 1) # Start of month
-    
-    # Metrics Variables
-    repairs_received = 0
-    repairs_delivered = 0
-    active_now = 0
-    
-    if not all_repairs.empty:
-        # Active Now (Status != Delivered) - Independent of time filter usually, but let's show CURRENT active
-        active_now = len(all_repairs[all_repairs['status'] != 'Delivered'])
-        
-        # Received (Compare start_date)
-        # Ensure start_date is date object
-        try:
-             # Vectorized conversion if possible, or loop
-             # Safe loop for small dataset
-             for _, row in all_repairs.iterrows():
-                 try:
-                     s_date = datetime.strptime(str(row['start_date']), '%Y-%m-%d').date()
-                     if s_date >= start_filter_date:
-                         repairs_received += 1
-                 except: pass
-                 
-                 if row['status'] == 'Delivered' and row['completion_date']:
-                     try:
-                         c_date = datetime.strptime(str(row['completion_date']), '%Y-%m-%d').date()
-                         if c_date >= start_filter_date:
-                             repairs_delivered += 1
-                     except: pass
-        except Exception as e:
-            pass
-
-    inventory = db.get_inventory()
-    low_stock_count = len(inventory[inventory['quantity'] < 5]) if not inventory.empty else 0
-
-    # Display Cards
-    rc1, rc2, rc3, rc4 = st.columns(4)
-    with rc1:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Repairs Received</div><div style="font-size:2rem; font-weight:bold; color:#7aa2f7;">{repairs_received}</div><div class="sub-text" style="font-size:0.8rem;">{filter_option}</div></div>""", unsafe_allow_html=True)
-    with rc2:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Repairs Delivered</div><div style="font-size:2rem; font-weight:bold; color:#9ece6a;">{repairs_delivered}</div><div class="sub-text" style="font-size:0.8rem;">{filter_option}</div></div>""", unsafe_allow_html=True)
-    with rc3:
-        st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Active Now</div><div style="font-size:2rem; font-weight:bold; color:#e0af68;">{active_now}</div><div class="sub-text" style="font-size:0.8rem;">Live Count</div></div>""", unsafe_allow_html=True)
-    with rc4:
-         color_stk = "#f7768e" if low_stock_count > 0 else "#9ece6a"
-         st.markdown(f"""<div class="modern-card" style="text-align:center;"><div class="sub-text">Low Stock Alerts</div><div style="font-size:2rem; font-weight:bold; color:{color_stk};">{low_stock_count}</div><div class="sub-text" style="font-size:0.8rem;">Inventory</div></div>""", unsafe_allow_html=True)
-
-    st.divider()
 
     # --- SECTION C: STOCK VALUATION (Prominent) ---
     stock_value = db.get_inventory_valuation()
@@ -2995,8 +2682,8 @@ elif menu == "👥 Partners & Ledger":
                              "quantity": st.column_config.NumberColumn("Qty", format="%d"),
                              "rate": st.column_config.NumberColumn("Price", format="Rs. %.0f"),
                              "discount": st.column_config.NumberColumn("Discount", format="Rs. %.0f"),
-                             "debit": st.column_config.NumberColumn("Total Bill (Debit)", format="Rs. %.0f"),
-                             "credit": st.column_config.NumberColumn("Cash Recieved (Credit)", format="Rs. %.0f"),
+                             "debit": st.column_config.NumberColumn("Total Bill", format="Rs. %.0f"),
+                             "credit": st.column_config.NumberColumn("Cash Received", format="Rs. %.0f"),
                              "Balance": st.column_config.NumberColumn("Outstanding Balance", format="Rs. %.0f"),
                          })
             

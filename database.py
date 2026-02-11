@@ -1127,6 +1127,39 @@ class DatabaseManager:
             df = df[df['customer_id'] != customer_id]
             self._write_data("Customers", df)
 
+    def delete_customer_full_data(self, customer_name):
+        """
+        Permanently deletes a customer and all associated data (Ledger, Sales, Repairs).
+        """
+        # 1. Delete from Customers Directory
+        customers = self._read_data("Customers")
+        if not customers.empty:
+            # Delete by Name
+            customers = customers[customers['name'] != customer_name]
+            self._write_data("Customers", customers)
+            
+        # 2. Delete from Ledger
+        ledger = self._read_data("Ledger")
+        if not ledger.empty:
+            ledger = ledger[ledger['party_name'] != customer_name]
+            self._write_data("Ledger", ledger)
+            
+        # 3. Delete from Sales
+        sales = self._read_data("Sales")
+        if not sales.empty:
+            if 'customer_name' in sales.columns:
+                sales = sales[sales['customer_name'] != customer_name]
+                self._write_data("Sales", sales)
+            
+        # 4. Delete from Repairs
+        repairs = self._read_data("Repairs")
+        if not repairs.empty:
+            if 'client_name' in repairs.columns:
+                repairs = repairs[repairs['client_name'] != customer_name]
+                self._write_data("Repairs", repairs)
+            
+        return True
+
     def get_all_customers(self):
         df = self._read_data("Customers")
         if df.empty:
@@ -1330,6 +1363,8 @@ class DatabaseManager:
             # Initialize Category Counts
             cat_counts = {c: 0 for c in categories}
             other_c = 0
+            
+            cust_ledger = pd.DataFrame()
             
             if not ledger.empty:
                 cust_ledger = ledger[ledger['party_name'] == p_name]
